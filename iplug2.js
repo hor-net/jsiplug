@@ -130,7 +130,7 @@ function AddControl(controlObj) {
     for (var i = 0; i  < controls.length; i++) {
         
         if( controls[i].getParamIdx() == controlObj.getParamIdx() 
-            && controls[i].getDomElement().id == controlObj.getDomElement().id) {
+            && controls[i].getDomElement().id == controlObj.getDomElement().id && controlObj.getParamIdx() >= 0) {
             
             controls[i].setParamData(GetParameterInfo(controls[i].getParamIdx()));
             return controls[i];

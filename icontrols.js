@@ -17,6 +17,7 @@ class iControl {
     this._width = 0;
     this._height = 0;
     this._captured = false;
+    this._paramIdx = -1;
     this._changeCallback = function() { return; }
     if(options.paramData) {
       this._paramData = options.paramData;
