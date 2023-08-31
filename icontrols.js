@@ -18,6 +18,13 @@ class iControl {
     this._height = 0;
     this._captured = false;
     this._paramIdx = -1;
+    this._minVal = 0;
+    this._maxVal = 1;
+    this._defaultVal = 0;
+    this._value = 0;
+    this._step = 10;
+    this._displayType = 0;
+    this._label = "";
     this._changeCallback = function() { return; }
     if(options.paramData) {
       this._paramData = options.paramData;
