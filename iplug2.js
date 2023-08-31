@@ -14,7 +14,8 @@ function SPVFD(paramIdx, val) {
 }
 
 function SCVFD(ctrlTag, val) {
-  OnControlChange(ctrlTag, val);
+    const event = new CustomEvent("ControlChange", {detail:{tag: ctrlTag, value: val}});
+    dispatchEvent(event);
 }
 
 function SCMFD(ctrlTag, msgTag, msgSize, msg) {
