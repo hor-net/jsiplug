@@ -23,10 +23,13 @@ function SCMFD(ctrlTag, msgTag, msgSize, msg) {
   
   // if we are receving the parameter configuration message configure the controls
   if(msgTag == -1) {
+    SetupControls();
     let paramData = JSON.parse(window.atob(msg));
     parameters.push(paramData);
-    // trigger the setup of controls so they can be added or updated with parameter info
-    SetupControls(); 
+    var controls = GetControlByParamId(paramData.id);
+    for (var i = 0; i < controls.length; i++) {
+        controls[i].setParamData(paramData);
+    }
   }
 }
 
@@ -127,36 +130,34 @@ function GetParameterInfo(paramIdx) {
 }
 
 function AddControl(controlObj) {
+
     // add control to controls array or update it if already present
     for (var i = 0; i  < controls.length; i++) {
-        
-        if( controls[i].getParamIdx() == controlObj.getParamIdx() 
-            && controls[i].getDomElement().id == controlObj.getDomElement().id && controlObj.getParamIdx() >= 0) {
-            
-            controls[i].setParamData(GetParameterInfo(controls[i].getParamIdx()));
-            return controls[i];
+        if(controls[i].getDomElement().id == controlObj.getDomElement().id) {
+            return;
         }
     }
     controls.push(controlObj);
-    return controlObj;
 }
 
 function GetControlByParamId(id) {
+  let retcontrols = [];
   for(var i =0; i < controls.length; i++) {
     if(controls[i].getParamIdx() == id) {
-      return controls[i];
+      retcontrols.push(controls[i]);;
     }
   }
-  return null;
+  return retcontrols;
 }
 
 function GetControlByMessageId(id) {
-  for(var i =0; i < controls.length; i++) {
-    if(controls[i].getMessageIdx() == id) {
-      return controls[i];
+    let retcontrols = [];
+    for(var i =0; i < controls.length; i++) {
+        if(controls[i].getMessageIdx() == id) {
+            retcontrols.push(controls[i]);
+        }
     }
-  }
-  return null;
+    return retcontrols;
 }
 
 function OnParamChange(paramIdx, val) {
@@ -170,6 +171,9 @@ function OnParamChange(paramIdx, val) {
 }
 
 function SetupControls() {
+
+    if(window.controls.length > 0) return;
+    
     // all the controls that should receive a message from the delegate
     var controls = document.querySelectorAll('[data-messageid]');
     controls.forEach(function(control){
@@ -218,5 +222,5 @@ function SetupControls() {
 // attach all the controls, both those with a parameter id and those
 // with a message id (not linked to a parameter)
 addEventListener('DOMContentLoaded', (event) => {
-  SetupControls();
+    SetupControls();
 });
