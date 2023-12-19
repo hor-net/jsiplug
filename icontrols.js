@@ -17,6 +17,7 @@ class iControl {
     this._width = 0;
     this._height = 0;
     this._captured = false;
+    this._informHostOfParamChange = true;
     this._paramIdx = -1;
     this._minVal = 0;
     this._maxVal = 1;
@@ -102,7 +103,8 @@ class iControl {
     if(value < 0) value = 0;
     if(this._value != value) {
       this._value = value;
-      SPVFUI(this._paramIdx, this._value);
+      if(this._informHostOfParamChange)
+        SPVFUI(this._paramIdx, this._value);
       this._changeCallback(this.fromNormalized(this._value));
     }
   }
@@ -123,8 +125,16 @@ class iControl {
     return this._domElement;
   }
    
+  setCaptured(toggle) {
+      this._captured = toggle;
+  }
+  
   isCaptured() {
     return this._captured;
+  }
+  
+  setInformHostOfParamChange(toggle) {
+    this._informHostOfParamChange = toggle;
   }
 
   setChangeCallback(func) {
@@ -157,6 +167,31 @@ class iDraggable extends iControl {
     this._height = window.getComputedStyle(document.getElementById(options.id)).getPropertyValue("height");
     this._height = this._height.substring(0, this._height.length-2);
     this._gearing = 4;
+    
+    // Options for the observer (which mutations to observe)
+    const observerconfig = { attributes: true, childList: true, subtree: true };
+    
+    // Create an observer instance linked to the callback function
+    const observer = new MutationObserver(
+        (mutationList, observer) => {
+          this._height = window.getComputedStyle(this._domElement).getPropertyValue("height");
+          this._height = this._height.substring(0, this._height.length-2);
+        });
+    
+    // Start observing the target node for configured mutations
+    observer.observe(this._domElement, { attributes: true, childList: true, subtree: true });
+    
+    // increase precision doubling the gearing while shift key is pressed
+    document.addEventListener("keydown", event => {
+        if (event.key =="Shift") {
+            this._gearing *= 4;
+        }
+    });
+    document.addEventListener("keyup", event => {
+        if (event.key =="Shift") {
+            this._gearing *= 0.25;
+        }
+    });
     
     this._domElement.addEventListener("mouseover", event => {
       if(!this._captured)
@@ -248,6 +283,64 @@ class iDraggable extends iControl {
     this._domElement.addEventListener("touchend", this.touchMouseUp);
   }
   
+}
+                       
+/**
+ * Implements a vertical fader, the cursor must have the .cursor class
+ */
+class iVerticalFader extends iDraggable {
+
+    constructor(options) {
+    
+    super(options);
+    
+    // when SVG is embedde using the "object" tag
+    this._fader = document.getElementById(options.id).contentDocument;
+    if(this._fader) {
+      this._cursor = document.getElementById(options.id).contentDocument.querySelector('.cursor');
+    }
+    // when svg is inlined ord html elements
+    if(!this._fader) {
+      this._fader = document.getElementById(options.id);
+      this._cursor = document.getElementById(options.id).querySelector('.cursor');
+    }
+    
+    this._sendingMsgToPlug = false;
+    
+    this._inputValue = document.getElementById(options.inputValueId);
+    if (this._inputValue) {
+        this._inputValue.addEventListener("click", event =>{
+            this._inputValue.select();
+        });
+    
+        this._inputValue.addEventListener("blur", event => {
+            this.setValue(this.toNormalized(this._inputValue.value));
+        });
+
+        this._inputValue.addEventListener("keypress", event => {
+            if (event.which === 13) {
+                this.setValue(this.toNormalized(this._inputValue.value));
+                document.activeElement.blur();
+            }
+        });
+    }
+    
+    this.setValue(this._value);
+    
+    this._gearing = 0.5;
+  }
+  
+  updateFader() {
+    this._cursor.style.transform = "translate(0px, -" + (this._value * (this._fader.offsetHeight - this._cursor.offsetHeight)) + "px)";
+  }
+      
+  setValue(value) {
+    super.setValue(value);
+    this.updateFader();
+    if(this._inputValue) {
+        this._inputValue.value = Math.round((this.fromNormalized(this._value)*this._step))/this._step;
+    }
+  }
 }
 
 /**
@@ -489,4 +582,113 @@ class iDraggableInput extends iDraggable {
     this._domElement.value = this.fromNormalized(this._value);
     this._domElement.value = Math.round(this._domElement.value*this._step)/this._step;
   }
+}
+
+/**
+ * Implements an analog style VU meter with SVG and javascript
+ */
+class iNeedleVUMeter extends iControl {
+    
+    constructor(options) {
+      
+        super(options);
+        // append the basic svg
+        this._domElement.innerHTML = `<svg id="${options.id}-svg" viewBox="0 0 400 220" preserveAspectRatio="xMidYMid meet" fill="none">
+            <g class="scaleGroup" transform="translate(60, 50) scale(0.7,1)">
+                <!-- Define tick lines and labels here -->
+            </g>
+            <g class="needleGroup" transform="translate(200, 220) scale(-1,-1)">
+                <line class="needleLine" x1="0" y1="0" x2="0" y2="200" stroke="black" stroke-width="4"></line>
+            </g>
+            <circle cx="200" cy="220" r="30" fill="black"/>
+        </svg>`;
+        
+        let svg = document.getElementById(options.id+"-svg");
+        this._scaleGroup = svg.querySelector(".scaleGroup");
+        this._needleGroup = svg.querySelector(".needleGroup");
+        this._needleLine = svg.querySelector("needleLine");
+
+        this._ticks = [-20, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3];
+        if(options.ticks)
+            this._ticks = options.ticks;
+            
+        this._minVal = this._ticks[0];
+        this._maxVal = this._ticks[this._ticks.length -1];
+            
+        this._width = 400; // Set a fixed width for the viewBox
+        this._height = 220; // Set a fixed height for the viewBox
+        this._tickLength = 10; // Length of tick lines
+        this._textOffset = 30; // Offset for text labels
+        
+        this._center = { x: this._width / 2, y: this._height }; // Center of rotation for the needle
+        this.drawScale();
+        this.setValue(0);
+    }
+    
+    drawScale() {
+        this._ticks.forEach((inDb) => {
+                const x = Math.exp(Math.log(1.055) * 2.1 * inDb) * this._width / 1.5;
+
+                // Draw tick line
+                const tickLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                tickLine.setAttribute("x1", x);
+                tickLine.setAttribute("y1", 10);
+                tickLine.setAttribute("x2", x);
+                tickLine.setAttribute("y2", 10 + this._tickLength);
+                tickLine.setAttribute("stroke", "black");
+                tickLine.setAttribute("stroke-width", "4");
+                tickLine.setAttribute("class", "tick");
+                if(inDb > 0){
+                    tickLine.setAttribute("stroke", "red");
+                    tickLine.setAttribute("class", "tick-alert");
+                }
+                
+                this._scaleGroup.appendChild(tickLine);
+
+                // Draw label below the tick
+                const textLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                textLabel.setAttribute("x", x);
+                textLabel.setAttribute("y", 10 + this._tickLength + this._textOffset);
+                textLabel.setAttribute("font-family", "Arial");
+                textLabel.setAttribute("font-size", "22");
+                textLabel.setAttribute("text-anchor", "middle");
+                textLabel.setAttribute("fill", "black");
+                textLabel.setAttribute("class", "label")
+                if(inDb > 0) {
+                    textLabel.setAttribute("fill", "red");
+                    textLabel.setAttribute("class","label-alert");
+                }
+                
+                textLabel.textContent = `${inDb}`;
+                this._scaleGroup.appendChild(textLabel);
+            });
+    }
+    
+    setValue(value) {
+        this._value = this.toNormalized(value);
+        // we don't call our super here because we
+        // don't want to send the parameter value to the host
+        if(this._value > this._maxVal) {
+            this._value = this._maxVal;
+        }
+        if(this._value < this._minVal) {
+            this._value = this._minVal;
+        }
+        this.setNeedle(value);
+    }
+    
+    // Function to set the needle angle based on the level
+    setNeedle(level) {
+        
+        // Ensure the level is within the valid range
+        level = Math.max(this._minVal, Math.min(this._maxVal, level));
+
+        let x = Math.exp(Math.log(1.055) * 2.1 * level) * this._width / 1.5;
+        x = x - this._center.x;
+        let angle = Math.atan(x / this._height);
+
+        // Update the needle's rotation
+        this._needleGroup.setAttribute("transform", `translate(${this._center.x}, ${this._center.y}) scale(-1,-1) rotate(${angle * (180 / Math.PI)})`);
+    }
+
 }

@@ -164,8 +164,12 @@ function OnParamChange(paramIdx, val) {
   for (var i = 0; i < controls.length; i++ ) {
     if(controls[i] == -1) continue;
     if(paramIdx == controls[i].getParamIdx()) {
-      if(controls[i].isCaptured() == false)
-        controls[i].setValue(val);
+      if(controls[i].isCaptured() == false) {
+        controls[i].setInformHostOfParamChange(false);
+        controls[i].setValue(val, false);
+        controls[i].getDomElement().dispatchEvent(new Event("change"));
+        controls[i].setInformHostOfParamChange(true);
+      }
     }
   }
 }
@@ -185,7 +189,15 @@ function SetupControls() {
                     "maxVal":control.getAttribute('data-maxval'),
                     "messageId":control.getAttribute("data-messageid")
                 }));
-            break;
+                break;
+            
+            case 'vumeter':
+                AddControl(new iNeedleVUMeter({
+                    "id":control.id,
+                    "ticks":control.getAttribute('data-ticks'),
+                    "messageId":control.getAttribute("data-messageid")
+                }));
+                break;
         }
     });
     // now attach all the controls linked to a parameter id
@@ -206,9 +218,12 @@ function SetupControls() {
             case "knob":
                 AddControl( new iRotatingKnob({"id": control.id, "inputValueId": control.id+"-val", "paramData":paramData}));
                 break;
+            case "vertical-fader":
+                AddControl( new iVerticalFader({"id": control.id, "inputValueId": control.id+"-val", "paramData":paramData}));
+                break;
             case "switch":
                 AddControl( new iSwitch({"id": control.id, "paramData":paramData}));
-                break;
+                break;    
             case "draggable-input":
                 AddControl( new iDraggableInput({"id": control.id, "paramData":paramData}, paramData.id));
                 break;
@@ -217,10 +232,13 @@ function SetupControls() {
                 break;
         }
     });
+ 
+  const event = new CustomEvent("ControlSetup", {});
+  dispatchEvent(event);
 }
 
 // attach all the controls, both those with a parameter id and those
 // with a message id (not linked to a parameter)
 addEventListener('DOMContentLoaded', (event) => {
-    SetupControls();
+  SetupControls();
 });
