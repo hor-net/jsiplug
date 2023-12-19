@@ -167,7 +167,7 @@ class iDraggable extends iControl {
     this._height = window.getComputedStyle(document.getElementById(options.id)).getPropertyValue("height");
     this._height = this._height.substring(0, this._height.length-2);
     this._gearing = 4;
-    
+
     // Options for the observer (which mutations to observe)
     const observerconfig = { attributes: true, childList: true, subtree: true };
     
@@ -217,13 +217,16 @@ class iDraggable extends iControl {
       this._startX = clientX;
       this._startY = clientY;
       this._captured = true;
+      this._domElement.setPointerCapture(event.pointerId);
       this._domElement.classList.add('captured-control');
     }
     
-    this._domElement.addEventListener("mousedown", this.touchMouseStart);
+    this._domElement.addEventListener("pointerdown", this.touchMouseStart);
     this._domElement.addEventListener("touchstart", this.touchMouseStart);
     
     this.touchMouseMove = (event) => {
+      
+      console.log(event.clientY);
       
       var clientX = -1;
       var clientY = -1;
@@ -241,19 +244,17 @@ class iDraggable extends iControl {
           clientY = event.clientY;
         }
       
-        if(clientX >= 0 && clientY >= 0) {
-          this._endX = clientX;
-          this._endY = clientY;
-          var delta = ((this._startY - this._endY) / this._height) * 0.5 / this._gearing;
-          this.setValue(this._value + delta);
-          this._startX = clientX;
-          this._startY = clientY;
-        }
+        this._endX = clientX;
+        this._endY = clientY;
+        var delta = ((this._startY - this._endY) / this._height) * 0.5 / this._gearing;
+        this.setValue(this._value + delta);
+        this._startX = clientX;
+        this._startY = clientY;
       }
     };
                      
-    document.addEventListener("mousemove", this.touchMouseMove);
     document.addEventListener("touchmove", this.touchMouseMove);
+    this._domElement.addEventListener("pointermove", this.touchMouseMove);
     
     this.touchMouseUp = (event) => {
       if(this._captured == true) {
@@ -278,9 +279,10 @@ class iDraggable extends iControl {
         this._endX = clientX;
         this._endY = clientY;
       }
+      this._domElement.releasePointerCapture(event.pointerId);
     };
-    document.addEventListener("mouseup", this.touchMouseUp);
     this._domElement.addEventListener("touchend", this.touchMouseUp);
+    this._domElement.addEventListener("pointerup", this.touchMouseUp);
   }
   
 }
