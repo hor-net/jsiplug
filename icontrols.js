@@ -226,8 +226,6 @@ class iDraggable extends iControl {
     
     this.touchMouseMove = (event) => {
       
-      console.log(event.clientY);
-      
       var clientX = -1;
       var clientY = -1;
       
