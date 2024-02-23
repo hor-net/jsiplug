@@ -160,7 +160,6 @@ function OnParamChange(paramIdx, val) {
       if(controls[i].isCaptured() == false) {
         controls[i].setInformHostOfParamChange(false);
         controls[i].setValue(val, false);
-        controls[i].getDomElement().dispatchEvent(new Event("change"));
         controls[i].setInformHostOfParamChange(true);
       }
     }
