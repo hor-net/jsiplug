@@ -603,6 +603,18 @@ class iDraggableInput extends iDraggable {
   }
   
   setValue(value) {
+    if(this._domElement.min) {
+        var normvalue = this.fromNormalized(value);
+        if(normvalue < this._domElement.min) {
+            value = this.toNormalized(this._domElement.min);
+        }
+    }
+    if(this._domElement.max) {
+        var normvalue = this.fromNormalized(value);
+        if(normvalue > this._domElement.max) {
+            value = this.toNormalized(this._domElement.max);
+        }
+    }
     super.setValue(value);
     this._domElement.value = this.fromNormalized(this._value);
     this._domElement.value = Math.round(this._domElement.value*this._step)/this._step;
