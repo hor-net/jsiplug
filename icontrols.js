@@ -589,12 +589,12 @@ class iDraggableInput extends iDraggable {
     });
     
     this._domElement.addEventListener("blur", event => {
-      this.setValue(this.toNormalized(this._domElement.value));
+      this.setValue(this.toNormalized(Number(this._domElement.value)));
     });
     
     this._domElement.addEventListener("keypress", event => {
         if (event.which === 13) {
-          this.setValue(this.toNormalized(this._domElement.value));
+          this.setValue(this.toNormalized(Number(this._domElement.value)));
           document.activeElement.blur();
         }
     });
