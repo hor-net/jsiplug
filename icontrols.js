@@ -108,6 +108,14 @@ class iControl {
       if(this._informHostOfParamChange)
         SPVFUI(this._paramIdx, this._value);
       this._changeCallback(this.fromNormalized(this._value));
+      this._domElement.dispatchEvent(new Event("change"));
+      // also update all the other controls with the same param idx
+      var controls = GetControlByParamId(this._paramIdx);
+      for (var i = 0; i < controls.length; i++) {
+        if (controls[i] != this) {
+            controls[i].setValue(value);
+        }
+      }
     }
   }
   
