@@ -177,6 +177,8 @@ class iDraggable extends iControl {
     this._height = window.getComputedStyle(document.getElementById(options.id)).getPropertyValue("height");
     this._height = this._height.substring(0, this._height.length-2);
     this._gearing = 4;
+    this._horizontal = options.horizontal;
+    if(this._horizontal) this._gearing = 2;
 
     // Options for the observer (which mutations to observe)
     const observerconfig = { attributes: true, childList: true, subtree: true };
@@ -186,6 +188,8 @@ class iDraggable extends iControl {
         (mutationList, observer) => {
           this._height = window.getComputedStyle(this._domElement).getPropertyValue("height");
           this._height = this._height.substring(0, this._height.length-2);
+          this._width = window.getComputedStyle(this._domElement).getPropertyValue("width");
+          this._width = this._width.substring(0, this._width.length-2);
         });
     
     // Start observing the target node for configured mutations
@@ -204,8 +208,13 @@ class iDraggable extends iControl {
     });
     
     this._domElement.addEventListener("mouseover", event => {
-      if(!this._captured)
-        this._domElement.style.cursor = "ns-resize";
+      if(!this._captured) {
+        if(this._horizontal == true) {
+            this._domElement.style.cursor = "ew-resize";
+        } else {
+            this._domElement.style.cursor = "ns-resize";
+        }
+      }  
     });
     
     this._domElement.addEventListener("mouseout", event => {
@@ -254,7 +263,13 @@ class iDraggable extends iControl {
       
         this._endX = clientX;
         this._endY = clientY;
-        var delta = ((this._startY - this._endY) / this._height) * 0.5 / this._gearing;
+        
+        var delta;
+        if(this._horizontal == true) {
+            delta = ((this._startX - this._endX) / this._width) * 0.5 / this._gearing;
+        } else {
+            delta = ((this._startY - this._endY) / this._height) * 0.5 / this._gearing;
+        }
         this.setValue(this._value + delta);
         this._startX = clientX;
         this._startY = clientY;
