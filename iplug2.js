@@ -130,13 +130,6 @@ function GetParameterInfo(paramIdx) {
 }
 
 function AddControl(controlObj) {
-
-    // add control to controls array or update it if already present
-    for (var i = 0; i  < controls.length; i++) {
-        if(controls[i].getDomElement().id == controlObj.getDomElement().id) {
-            return;
-        }
-    }
     controls.push(controlObj);
 }
 
