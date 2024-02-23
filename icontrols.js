@@ -46,10 +46,12 @@ class iControl {
       this._receiveMessage = options.messageId;
     }
     
-    this._domElement.addEventListener("dblclick", event => {
+    this.dblClickHandler = event => {
       let value = this.toNormalized(this._defaultVal);
       this.setValue(value);
-    });
+    }
+    
+    this._domElement.addEventListener("dblclick", this.dblClickHandler);
   }
   
   fromNormalized(value) {
