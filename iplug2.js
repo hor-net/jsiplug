@@ -137,7 +137,7 @@ function GetControlByParamId(id) {
   let retcontrols = [];
   for(var i =0; i < controls.length; i++) {
     if(controls[i].getParamIdx() == id) {
-      retcontrols.push(controls[i]);;
+      retcontrols.push(controls[i]);
     }
   }
   return retcontrols;
