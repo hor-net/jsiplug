@@ -553,7 +553,7 @@ class iSegmentMeter extends iControl {
     for (var i = 0; i < this._nrSegments; i++) {
       this._domElement.children[i].classList.remove("meter-on");
       // add back meter-on if value is greater than current segment
-      if(this._value >= this._domElement.children[i].getAttribute('data-value')) {
+      if(this._value >= Number(this._domElement.children[i].getAttribute('data-value'))) {
         this._domElement.children[i].classList.add("meter-on");
       }
     }
