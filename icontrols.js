@@ -240,7 +240,7 @@ class iDraggable extends iControl {
       this._domElement.classList.add('captured-control');
     }
     
-    this._domElement.addEventListener("pointerdown", this.touchMouseStart);
+    this._domElement.addEventListener("mousedown", this.touchMouseStart);
     this._domElement.addEventListener("touchstart", this.touchMouseStart);
     
     this.touchMouseMove = (event) => {
@@ -277,7 +277,7 @@ class iDraggable extends iControl {
     };
                      
     document.addEventListener("touchmove", this.touchMouseMove);
-    this._domElement.addEventListener("pointermove", this.touchMouseMove);
+    document.addEventListener("mousemove", this.touchMouseMove);
     
     this.touchMouseUp = (event) => {
       if(this._captured == true) {
@@ -305,7 +305,7 @@ class iDraggable extends iControl {
       this._domElement.releasePointerCapture(event.pointerId);
     };
     this._domElement.addEventListener("touchend", this.touchMouseUp);
-    this._domElement.addEventListener("pointerup", this.touchMouseUp);
+    document.addEventListener("mouseup", this.touchMouseUp);
   }
   
 }
