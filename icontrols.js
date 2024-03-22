@@ -533,6 +533,8 @@ class iSegmentMeter extends iControl {
   
   setValue(value) {
     value = Math.floor(value);
+    if(value < this._minVal) value = this._minVal;
+    
     // we don't call our super here because we
     // don't want to send the parameter value to the host
     if(value > this._value) {
