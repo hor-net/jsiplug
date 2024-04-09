@@ -528,12 +528,12 @@ class iSegmentMeter extends iControl {
     
     setInterval(() => this.updateMeter(), 10);
     setInterval(() => this.decayValue(), 100);
-    setInterval(() => this.decayPeakValue(), 1000);
+    setInterval(() => this.decayPeakValue(), 3000);
   }
   
   setValue(value) {
     value = Math.floor(value);
-    if(value < this._minVal) value = this._minVal;
+    //if(value < this._minVal) value = this._minVal;
     
     // we don't call our super here because we
     // don't want to send the parameter value to the host
@@ -551,28 +551,35 @@ class iSegmentMeter extends iControl {
   updateMeter() {
     // init our segments
     for (var i = 0; i < this._nrSegments; i++) {
-      this._domElement.children[i].classList.remove("meter-on");
       // add back meter-on if value is greater than current segment
       if(this._value >= Number(this._domElement.children[i].getAttribute('data-value'))) {
-        this._domElement.children[i].classList.add("meter-on");
+        if(!this._domElement.children[i].classList.contains("meter-on")){
+          this._domElement.children[i].classList.add("meter-on");
+        }
+      }else{
+        this._domElement.children[i].classList.remove("meter-on");
+      }
+      // set the peak hold
+      if(this._peakVal > this._minVal) {
+        if(Number(this._domElement.children[i].getAttribute('data-value')) == this._peakVal) {
+          this._domElement.children[i].classList.add("meter-on");
+        }
       }
     }
-    
-    // set the peak hold
-    //if(this._peakVal > this._minVal) {
-    //  this._domElement.getElementsByClassName(this._peakVal)[0].classList.add("meter-on");
-    //}
   }
       
   decayValue() {
     if(this._value > this._minVal -1) {
       this._value = this._value -1;
+      if(this._minVal == 0 && this._value < 0) {
+        this._value = 0;
+      }
     }
   }
   
   decayPeakValue() {
     if(this._peakVal > this._minVal -1 ) {
-      this._peakVal = this._peakVal -1;
+      this._peakVal = this._minVal -1;
     }
   }
 }
