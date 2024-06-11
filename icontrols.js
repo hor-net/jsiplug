@@ -236,7 +236,6 @@ class iDraggable extends iControl {
       this._startX = clientX;
       this._startY = clientY;
       this._captured = true;
-      this._domElement.setPointerCapture(event.pointerId);
       this._domElement.classList.add('captured-control');
     }
     
@@ -264,11 +263,13 @@ class iDraggable extends iControl {
         this._endX = clientX;
         this._endY = clientY;
         
-        var delta;
+        var delta = 0;
         if(this._horizontal == true) {
-            delta = ((this._startX - this._endX) / this._width) * 0.5 / this._gearing;
+            if(this._endX > 0)
+              delta = ((this._startX - this._endX) / Number(this._width)) * 0.5 / this._gearing;
         } else {
-            delta = ((this._startY - this._endY) / this._height) * 0.5 / this._gearing;
+            if(this._endY > 0)
+              delta = ((this._startY - this._endY) / Number(this._height)) * 0.5 / this._gearing;
         }
         this.setValue(this._value + delta);
         this._startX = clientX;
@@ -302,7 +303,6 @@ class iDraggable extends iControl {
         this._endX = clientX;
         this._endY = clientY;
       }
-      this._domElement.releasePointerCapture(event.pointerId);
     };
     this._domElement.addEventListener("touchend", this.touchMouseUp);
     document.addEventListener("mouseup", this.touchMouseUp);
@@ -394,6 +394,7 @@ class iRotatingKnob extends iDraggable {
     this._maxAngle = 135;
     this._angle = 0;
     this._sendingMsgToPlug = false;
+    this._gearing = 2;
     
     //this.updateKnob();
     
