@@ -131,6 +131,10 @@ class iControl {
     return this._receiveMessage;
   }
   
+  setMessageIdx(idx) {
+    this._receiveMessage = idx;
+  }
+  
   getDomElement() {
     return this._domElement;
   }
