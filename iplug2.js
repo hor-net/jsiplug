@@ -153,6 +153,14 @@ function GetControlByMessageId(id) {
     return retcontrols;
 }
 
+function GetControlById(id) {
+    for(var i =0; i < controls.length; i++) {
+        if(controls[i].getDomElement().id == id) {
+            return controls[i];
+        }
+    }
+}
+
 function OnParamChange(paramIdx, val) {
   for (var i = 0; i < controls.length; i++ ) {
     if(controls[i] == -1) continue;
