@@ -176,11 +176,12 @@ function OnParamChange(paramIdx, val) {
 
 function SetupControls() {
 
-    if(window.controls.length > 0) return;
+    if(controls.length > 0) return;
     
     // all the controls that should receive a message from the delegate
-    var controls = document.querySelectorAll('[data-messageid]');
-    controls.forEach(function(control){
+    var pcontrols = document.querySelectorAll('[data-messageid]');
+    pcontrols.forEach(function(control){
+        
         switch(control.getAttribute('data-controltype')){
             case 'segment-meter':
                 AddControl(new iSegmentMeter({
@@ -201,8 +202,8 @@ function SetupControls() {
         }
     });
     // now attach all the controls linked to a parameter id
-    var controls = document.querySelectorAll('[data-paramid]');
-    controls.forEach(function(control){
+    var pcontrols = document.querySelectorAll('[data-paramid]');
+    pcontrols.forEach(function(control){
   
         var paramData = {
                         "id":control.getAttribute("data-paramid"),
