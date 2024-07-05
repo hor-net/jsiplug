@@ -693,8 +693,16 @@ class iNeedleVUMeter extends iControl {
         this._textOffset = 30; // Offset for text labels
         
         this._center = { x: this._width / 2, y: this._height }; // Center of rotation for the needle
+        
+        this._fps = 60;
+        this._vuVal = 0;
+        this._envVuVal = 0;
+        this._envAlpha = Math.pow(0.001,1/0.3*(this._fps));
+        
         this.drawScale();
         this.setValue(0);
+        
+        this.setNeedle();
     }
     
     drawScale() {
@@ -737,6 +745,7 @@ class iNeedleVUMeter extends iControl {
     }
     
     setValue(value) {
+        this._vuVal = value;
         this._value = this.toNormalized(value);
         // we don't call our super here because we
         // don't want to send the parameter value to the host
@@ -746,11 +755,17 @@ class iNeedleVUMeter extends iControl {
         if(this._value < this._minVal) {
             this._value = this._minVal;
         }
-        this.setNeedle(value);
+        //this.setNeedle(value);
     }
     
     // Function to set the needle angle based on the level
-    setNeedle(level) {
+    setNeedle() {
+        
+        var level = this._vuVal;
+        this._envVuVal = this._envAlpha * (this._envVuVal - level) + level;
+        level = this._envVuVal;
+        this._envVuVal = this._envAlpha * (this._envVuVal - level) + level;
+        level = this._envVuVal;
         
         // Ensure the level is within the valid range
         level = Math.max(this._minVal, Math.min(this._maxVal, level));
@@ -761,6 +776,157 @@ class iNeedleVUMeter extends iControl {
 
         // Update the needle's rotation
         this._needleGroup.setAttribute("transform", `translate(${this._center.x}, ${this._center.y}) scale(-1,-1) rotate(${angle * (180 / Math.PI)})`);
+        
+        requestAnimationFrame(this.setNeedle.bind(this));
     }
 
 }
+
+// class iNeedleVUMeter extends iControl {
+//     constructor(options) {
+//         super(options);
+// 
+//         this._canvas = document.createElement('canvas');
+//         this._domElement.appendChild(this._canvas);
+// 
+//         this._scene = new THREE.Scene();
+//         this._camera = new THREE.OrthographicCamera(-this._domElement.clientWidth / 2, this._domElement.clientWidth / 2, this._domElement.clientHeight / 2, -this._domElement.clientHeight / 2, 1, 1000);
+//         this._camera.position.z = 500;
+// 
+//         this._renderer = new THREE.WebGLRenderer({ canvas: this._canvas, alpha: true, antialias: true });
+//         //this._renderer.setPixelRatio(window.devicePixelRatio);
+//         this._renderer.setClearColor(0x000000, 0);  // Set the clear color to black and fully transparent
+//         this._renderer.setSize(this._domElement.clientWidth, this._domElement.clientHeight);
+// 
+//         this._ticks = options.ticks || [-20, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3];
+//         this._minVal = this._ticks[0];
+//         this._maxVal = this._ticks[this._ticks.length - 1];
+// 
+//         this._fps = 30;
+//         this._vuVal = 0;
+//         this._envVuVal = 0;
+//         this._envAlpha = Math.pow(0.001, 1 / 0.3 * (this._fps));
+// 
+//         this._needle = this.createNeedle();
+//         this._scene.add(this._needle);
+// 
+//         this.drawScale();
+//         this.setValue(0);
+// 
+//         window.addEventListener('resize', this.resizeCanvas.bind(this));
+//         this.resizeCanvas();
+// 
+//         this.animate();
+//         //setInterval(this.animate.bind(this), 1 / this._fps);
+//     }
+// 
+//     resizeCanvas() {
+//         this._canvas.width = this._domElement.clientWidth;
+//         this._canvas.height = this._domElement.clientHeight;
+//         this._renderer.setSize(this._domElement.clientWidth, this._domElement.clientHeight);
+// 
+//         this._camera.left = -this._domElement.clientWidth / 2;
+//         this._camera.right = this._domElement.clientWidth / 2;
+//         this._camera.top = this._domElement.clientHeight / 2;
+//         this._camera.bottom = -this._domElement.clientHeight / 2;
+//         this._camera.updateProjectionMatrix();
+// 
+//         // Update needle and scale positions
+//         this._needle.geometry.attributes.position.array[1] = 0;
+//         this._needle.geometry.attributes.position.array[4] = this._domElement.clientHeight;
+//         this._needle.geometry.attributes.position.needsUpdate = true;
+// 
+//         this.drawScale();
+//     }
+// 
+//     createNeedle() {
+//         const geometry = new THREE.BufferGeometry();
+//         const vertices = new Float32Array([
+//             0, 0, 0,
+//             0, this._domElement.clientHeight / 2, 0
+//         ]);
+//         geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+// 
+//         const material = new THREE.LineBasicMaterial({ color: 0x000000, lineWidth: 4 });
+//         const needle = new THREE.Line(geometry, material);
+// 
+//         needle.position.y = -this._domElement.clientHeight / 2 -20;
+//         return needle;
+//     }
+// 
+//     drawScale() {
+//         // Clear previous ticks and labels
+//         while (this._scene.children.length > 1) {
+//             this._scene.remove(this._scene.children[1]);
+//         }
+// 
+//         const loader = new THREE.FontLoader();
+//         loader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json', (font) => {
+//             this._ticks.forEach((inDb) => {
+//                 const x = Math.exp(Math.log(1.055) * 2.1 * inDb) * this._domElement.clientWidth / 1.5 - this._domElement.clientWidth / 2;
+//                 
+//                 const tickGeometry = new THREE.BufferGeometry();
+//                 const tickVertices = new Float32Array([
+//                     x, this._domElement.clientHeight / 2 - 20, 0,
+//                     x, this._domElement.clientHeight / 2 - 30, 0
+//                 ]);
+//                 tickGeometry.setAttribute('position', new THREE.BufferAttribute(tickVertices, 3));
+// 
+//                 const tickColor = inDb > 0 ? 0xff0000 : 0x000000;  // Red if tick is greater than 0
+//                 const tickMaterial = new THREE.LineBasicMaterial({ color: tickColor });
+//                 const tick = new THREE.Line(tickGeometry, tickMaterial);
+//                 this._scene.add(tick);
+// 
+//                 const textGeometry = new THREE.TextGeometry(inDb.toString(), {
+//                     font: font,
+//                     size: 10,
+//                     height: 1
+//                 });
+//                 textGeometry.computeBoundingBox();
+//                 const textWidth = textGeometry.boundingBox.max.x - textGeometry.boundingBox.min.x;
+// 
+//                 const textMaterial = new THREE.MeshBasicMaterial({ color: tickColor });
+//                 const textMesh = new THREE.Mesh(textGeometry, textMaterial);
+//                 textMesh.position.set(x - textWidth / 2, this._domElement.clientHeight / 2 - 50, 0);
+//                 this._scene.add(textMesh);
+//             });
+//         });
+//     }
+// 
+//     setValue(value) {
+//         this._vuVal = value;
+//         this._value = this.toNormalized(value);
+// 
+//         if (this._value > this._maxVal) {
+//             this._value = this._maxVal;
+//         }
+//         if (this._value < this._minVal) {
+//             this._value = this._minVal;
+//         }
+//     }
+// 
+//     animate() {
+//         requestAnimationFrame(this.animate.bind(this));
+//         this.setNeedle();
+//         this._renderer.render(this._scene, this._camera);
+//     }
+// 
+//     setNeedle() {
+//         let level = this._vuVal;
+//         this._envVuVal = this._envAlpha * (this._envVuVal - level) + level;
+//         level = this._envVuVal;
+//         this._envVuVal = this._envAlpha * (this._envVuVal - level) + level;
+//         level = this._envVuVal;
+// 
+//         level = Math.max(this._minVal, Math.min(this._maxVal, level));
+// 
+//         let x = Math.exp(Math.log(1.055) * 2.1 * level) * this._domElement.clientWidth / 1.5 - this._domElement.clientWidth / 2;
+//         //let angle = Math.atan(x / (this._domElement.clientHeight / 2));
+// 
+//         //this._needle.rotation.z = -angle;
+//         
+//         this._needle.geometry.attributes.position.array[3] = x;
+//         this._needle.geometry.attributes.position.needsUpdate = true;
+//     }
+// }
+
