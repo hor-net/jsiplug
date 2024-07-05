@@ -231,6 +231,9 @@ function SetupControls() {
             case "select":
                 AddControl( new iSelect({"id": control.id, "paramData":paramData}, paramData.id));
                 break;
+            case "radio":
+                AddControl( new iRadio({"id": control.id, "paramData":paramData}, paramData.id));
+                break;
             default:
                 var controlname = "new i"+control.getAttribute('data-controltype')+'({"id": control.id, "paramData":paramData}, paramData.id)';
                 console.log(controlname);

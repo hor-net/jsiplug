@@ -493,6 +493,31 @@ class iSelect extends iControl {
 }
 
 /**
+ * Implements a radio buttons control
+ */
+class iRadio extends iControl {
+
+    constructor(options) {
+        super(options);
+        
+        this._domElement.addEventListener("click", event => {
+            document.activeElement.blur();
+            this.setValue(this.toNormalized(event.currentTarget.value));
+        });
+    }
+    
+    setValue(value) {
+        super.setValue(value);
+        var nroptions = document.getElementsByName(this._domElement.name);
+        if(this._domElement.value == this.fromNormalized(value)) {
+            this._domElement.checked = true;
+        } else {
+            this._domElement.checked = false;
+        }
+    }
+}
+
+/**
  * Implements a text control
  */
 class iText extends iControl {
