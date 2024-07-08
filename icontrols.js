@@ -269,10 +269,10 @@ class iDraggable extends iControl {
         
         var delta = 0;
         if(this._horizontal == true) {
-            if(this._endX > 0)
+            if(this._endX != -1)
               delta = ((this._startX - this._endX) / Number(this._width)) * 0.5 / this._gearing;
         } else {
-            if(this._endY > 0)
+            if(this._endY != -1)
               delta = ((this._startY - this._endY) / Number(this._height)) * 0.5 / this._gearing;
         }
         this.setValue(this._value + delta);
@@ -701,7 +701,7 @@ class iNeedleVUMeter extends iControl {
         this._fps = 60;
         this._vuVal = 0;
         this._envVuVal = 0;
-        this._envAlpha = Math.pow(0.001,1/0.3*(this._fps));
+        this._envAlpha = Math.pow(0.001,1/(0.3*(Number(this._fps))));
         
         this.drawScale();
         this.setValue(0);
