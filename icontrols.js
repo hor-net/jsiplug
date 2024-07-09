@@ -490,9 +490,9 @@ class iSelect extends iControl {
   }
   
   setValue(value) {
-    super.setValue(value);
     let val = this.fromNormalized(value);
     this._domElement.value = Math.round(val);
+    super.setValue(value);
   }
 }
 
