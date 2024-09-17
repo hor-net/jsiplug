@@ -196,7 +196,9 @@ function SetupControls() {
                 AddControl(new iNeedleVUMeter({
                     "id":control.id,
                     "ticks":control.getAttribute('data-ticks'),
-                    "messageId":control.getAttribute("data-messageid")
+                    "messageId":control.getAttribute("data-messageid"),
+                    "shape": control.getAttribute('data-shape'),
+                    "redifabove": control.getAttribute('data-redifabove'),
                 }));
                 break;
         }
