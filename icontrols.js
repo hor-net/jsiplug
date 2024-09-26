@@ -771,7 +771,8 @@ class iNeedleVUMeter extends iControl {
           x = Math.exp(Math.log(1.055) * 2.1 * inDb) * this._width / 1.5;
           break;
         case "lin":
-          x = (3 * inDb + 1) * this._width / 64
+          //x = (3 * inDb + 1) * this._width / 64
+          x = 250 + (3 * inDb + 1) * this._width / 200
           break;
         default:
           x = Math.exp(Math.log(1.055) * 2.1 * inDb) * this._width / 1.5;
@@ -853,7 +854,8 @@ class iNeedleVUMeter extends iControl {
         x = Math.exp(Math.log(1.055) * 2.1 * level) * this._width / 1.5;
         break;
       case "lin":
-        x = (3 * level + 1) * this._width / 64
+        //x = (3 * level + 1) * this._width / 64
+        x = 250 + (3 * level + 1) * this._width / 200
         break;
       default:
         x = Math.exp(Math.log(1.055) * 2.1 * level) * this._width / 1.5;
