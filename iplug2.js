@@ -34,7 +34,21 @@ function SCMFD(ctrlTag, msgTag, msgSize, msg) {
 }
 
 function SAMFD(msgTag, dataSize, msg) {
-  OnArbitraryMessage(msgTag, msg);
+  let data = JSON.parse(window.atob(msg));
+  console.log(data);
+  if (data["id"] == "params") {
+    SetupControls();
+    console.log(data["params"]);
+    for( var i = 0; i < data["params"].length; i++) {
+      parameters.push(data["params"][i]);
+      var controls = GetControlByParamId(data["params"][i].id);
+      for (var c = 0; c < controls.length; c++) {
+          controls[c].setParamData(data["params"][i]);
+      }
+    }
+  }
+  const event = new CustomEvent("ArbitraryMessage", {detail:{tag: msgTag, value: msg}});
+  dispatchEvent(event);
 }
 
 function SMMFD(statusByte, dataByte1, dataByte2) {
