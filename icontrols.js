@@ -6,7 +6,6 @@
  * @author    Saverio Vigni <saverio.vigni@hornetplugins.com>
  */
 
-
 /**
  * Base icontrol class that must be extended by single widgets
  */
@@ -415,8 +414,6 @@ class iRotatingKnob extends iDraggable {
     this._angle = 0;
     this._sendingMsgToPlug = false;
     this._gearing = 2;
-
-    //this.updateKnob();
 
     this._inputValue = document.getElementById(options.inputValueId);
     if (this._inputValue) {
