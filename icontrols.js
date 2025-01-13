@@ -369,6 +369,10 @@ class iVerticalFader extends iDraggable {
     this.setValue(this._value);
 
     this._gearing = 0.5;
+    
+    addEventListener("resize", (event) => {
+      this.updateFader();
+    });
   }
 
   updateFader() {
