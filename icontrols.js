@@ -408,6 +408,7 @@ class iRotatingKnob extends iDraggable {
     }
     this._rotator.style.transformOriginX = '50%';
     this._rotator.style.transformOriginY = '50%';
+    this._rotator.style.background = getComputedStyle(this._rotator).background;
 
     this._minAngle = -135;
     this._maxAngle = 135;
