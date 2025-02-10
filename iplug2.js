@@ -7,6 +7,8 @@ var controls = [];
 // param values
 var paramValues = [];
 
+var setupReady = false;
+
 // FROM DELEGATE
 function SPVFD(paramIdx, val) {
   console.log("paramIdx: " + paramIdx + " value:" + val);
@@ -14,8 +16,10 @@ function SPVFD(paramIdx, val) {
 }
 
 function SCVFD(ctrlTag, val) {
+  if(setupReady) {
     const event = new CustomEvent("ControlChange", {detail:{tag: ctrlTag, value: val}});
     dispatchEvent(event);
+  }
 }
 
 function SCMFD(ctrlTag, msgTag, msgSize, msg) {
@@ -47,8 +51,10 @@ function SAMFD(msgTag, dataSize, msg) {
       }
     }
   }
-  const event = new CustomEvent("ArbitraryMessage", {detail:{tag: msgTag, value: msg}});
-  dispatchEvent(event);
+  if(setupReady) {
+    const event = new CustomEvent("ArbitraryMessage", {detail:{tag: msgTag, value: msg}});
+    dispatchEvent(event);
+  }
 }
 
 function SMMFD(statusByte, dataByte1, dataByte2) {
@@ -202,6 +208,8 @@ function SetupControls() {
                     "id":control.id,
                     "minVal":control.getAttribute('data-minval'),
                     "maxVal":control.getAttribute('data-maxval'),
+                    "zeroVal":control.getAttribute('data-zeroval'),
+                    "decayTime":control.getAttribute('data-decaytime'),
                     "messageId":control.getAttribute("data-messageid")
                 }));
                 break;
@@ -240,7 +248,10 @@ function SetupControls() {
                 break;
             case "switch":
                 AddControl( new iSwitch({"id": control.id, "paramData":paramData}));
-                break;    
+                break;
+            case "button":
+                AddControl( new iButton({"id": control.id, "paramData":paramData}));
+                break;
             case "draggable-input":
                 AddControl( new iDraggableInput({"id": control.id, "paramData":paramData}, paramData.id));
                 break;
@@ -260,6 +271,7 @@ function SetupControls() {
  
   const event = new CustomEvent("ControlSetup", {});
   dispatchEvent(event);
+  setupReady = true;
   
 }
 
