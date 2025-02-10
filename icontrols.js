@@ -492,6 +492,22 @@ class iSwitch extends iControl {
     this.updateSwitch();
   }
 }
+                     
+/**
+ * Implents an on/off button
+ */
+class iButton extends iControl {
+  constructor(options) {
+    super(options);
+    
+    this._domElement.addEventListener('click', event => {
+      super.setValue(1);
+      super.setValue(0);
+    });
+  }
+              
+  
+}
 
 /**
  * Implements a select input control
@@ -570,13 +586,24 @@ class iSegmentMeter extends iControl {
     this._minVal = options.minVal;
     this._maxVal = options.maxVal;
     this._peakVal = options.minVal;
+    this._zeroVal = options.minVal;
+    if(options.zeroVal) {
+      this._zeroVal = options.zeroVal;
+    }
+    this._decayTime = 3000;
+    if(options.decayTime) {
+      this._decayTime = options.decayTime;
+    }
+    
     this._nrSegments = this._domElement.children.length;
     if (options.nrSegments) {
       this._nrSegments = options.nrSegments;
     }
 
     setInterval(() => this.updateMeter(), 10);
-    setInterval(() => this.decayValue(), 100);
+    if(Number(this.decayTime) > 0) {
+      setInterval(() => this.decayValue(), Number(this._decayTime));
+    }
     setInterval(() => this.decayPeakValue(), 3000);
   }
 
@@ -584,6 +611,11 @@ class iSegmentMeter extends iControl {
     value = Math.floor(value);
     //if(value < this._minVal) value = this._minVal;
 
+    if(this._decayTime == 0) {
+      this._value = value;
+      this._maxVal = value;
+    }
+    
     // we don't call our super here because we
     // don't want to send the parameter value to the host
     if (value > this._value) {
@@ -600,14 +632,25 @@ class iSegmentMeter extends iControl {
   updateMeter() {
     // init our segments
     for (var i = 0; i < this._nrSegments; i++) {
-      // add back meter-on if value is greater than current segment
-      if (this._value >= Number(this._domElement.children[i].getAttribute('data-value'))) {
-        if (!this._domElement.children[i].classList.contains("meter-on")) {
-          this._domElement.children[i].classList.add("meter-on");
-        }
+      
+      var curSegment = Number(this._domElement.children[i].getAttribute('data-value'));
+      if (curSegment >= this._zeroVal && curSegment <= this._value) {
+        this._domElement.children[i].classList.add("meter-on");
+      } else if (curSegment >= this._value && curSegment <= this._zeroVal) {
+        this._domElement.children[i].classList.add("meter-on");
       } else {
         this._domElement.children[i].classList.remove("meter-on");
       }
+      
+      // add back meter-on if value is greater than current segment
+      //if (this._value >= Number(this._domElement.children[i].getAttribute('data-value'))) {
+      //  if (!this._domElement.children[i].classList.contains("meter-on")) {
+      //    this._domElement.children[i].classList.add("meter-on");
+      //  }
+      //} else {
+      //  this._domElement.children[i].classList.remove("meter-on");
+      //}
+      
       // set the peak hold
       if (this._peakVal > this._minVal) {
         if (Number(this._domElement.children[i].getAttribute('data-value')) == this._peakVal) {
