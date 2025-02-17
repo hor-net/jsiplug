@@ -7,6 +7,9 @@ var controls = [];
 // param values
 var paramValues = [];
 
+// event queue
+var eventQueue = [];
+
 var setupReady = false;
 
 // FROM DELEGATE
@@ -51,9 +54,11 @@ function SAMFD(msgTag, dataSize, msg) {
       }
     }
   }
+  const event = new CustomEvent("ArbitraryMessage", {detail:{tag: msgTag, value: msg}});
   if(setupReady) {
-    const event = new CustomEvent("ArbitraryMessage", {detail:{tag: msgTag, value: msg}});
     dispatchEvent(event);
+  } else {
+    eventQueue.push(event);
   }
 }
 
@@ -270,8 +275,18 @@ function SetupControls() {
     });
  
   const event = new CustomEvent("ControlSetup", {});
+  
+  addEventListener("ControlSetup", (event) => {
+    setTimeout(function() {
+      setupReady = true;
+      for (var i = 0; i < eventQueue.length; i++) {
+        dispatchEvent(eventQueue[i]);
+      }
+      eventQueue = [];
+    },0);
+  });
+  
   dispatchEvent(event);
-  setupReady = true;
   
 }
 
