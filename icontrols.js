@@ -252,7 +252,7 @@ class iDraggable extends iControl {
       this._startY = clientY;
       this._captured = true;
       this._domElement.classList.add('captured-control');
-    }
+    };
 
     this._domElement.addEventListener("mousedown", this.touchMouseStart);
     this._domElement.addEventListener("touchstart", this.touchMouseStart);
@@ -590,7 +590,7 @@ class iSegmentMeter extends iControl {
     if(options.zeroVal) {
       this._zeroVal = options.zeroVal;
     }
-    this._decayTime = 3000;
+    this._decayTime = 100;
     if(options.decayTime) {
       this._decayTime = options.decayTime;
     }
@@ -600,8 +600,10 @@ class iSegmentMeter extends iControl {
       this._nrSegments = options.nrSegments;
     }
 
-    setInterval(() => this.updateMeter(), 10);
-    if(Number(this.decayTime) > 0) {
+    // start metering update
+    this.updateMeter();
+    
+    if(Number(this._decayTime) > 0) {
       setInterval(() => this.decayValue(), Number(this._decayTime));
     }
     setInterval(() => this.decayPeakValue(), 3000);
@@ -658,6 +660,7 @@ class iSegmentMeter extends iControl {
         }
       }
     }
+    requestAnimationFrame(this.updateMeter.bind(this));
   }
 
   decayValue() {
