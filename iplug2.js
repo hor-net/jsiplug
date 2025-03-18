@@ -282,7 +282,15 @@ function SetupControls() {
       for (var i = 0; i < eventQueue.length; i++) {
         dispatchEvent(eventQueue[i]);
       }
+      
       eventQueue = [];
+      
+      addEventListener('ControlChange', (event)=> {
+        GetControlByMessageId(event.detail.tag).forEach(function(elem){
+          elem.setValue(event.detail.value);
+        });
+      });
+      
     },0);
   });
   
