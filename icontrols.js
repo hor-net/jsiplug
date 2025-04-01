@@ -629,6 +629,10 @@ class iSegmentMeter extends iControl {
     if (this._value > this._peakVal) {
       this._peakVal = this._value;
     }
+    
+    if (this._decayTime == 0) {
+      this.updateMeter();
+    }
   }
 
   updateMeter() {
@@ -660,7 +664,8 @@ class iSegmentMeter extends iControl {
         }
       }
     }
-    requestAnimationFrame(this.updateMeter.bind(this));
+    if(this._decayTime > 0)
+      requestAnimationFrame(this.updateMeter.bind(this));
   }
 
   decayValue() {
