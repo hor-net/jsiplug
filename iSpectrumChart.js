@@ -67,14 +67,36 @@ class iSpectrumChart extends iControl {
             this._preferences = {...this._preferences, ...options.preferences};
         }
         
-        // Create canvas element
-        this._canvas = document.createElement('canvas');
-        this._canvas.style.width = '100%';
-        this._canvas.style.height = '100%';
-        this._canvas.style.display = 'block';
+        // Create two canvas elements
+        this._gridCanvas = document.createElement('canvas');
+        this._spectrumCanvas = document.createElement('canvas');
+        
+        // Style the canvases for stacking
+        this._gridCanvas.style.width = '100%';
+        this._gridCanvas.style.height = '100%';
+        this._gridCanvas.style.position = 'absolute';
+        this._gridCanvas.style.top = '0';
+        this._gridCanvas.style.left = '0';
+        this._gridCanvas.style.display = 'block';
+        
+        this._spectrumCanvas.style.width = '100%';
+        this._spectrumCanvas.style.height = '100%';
+        this._spectrumCanvas.style.position = 'absolute';
+        this._spectrumCanvas.style.top = '0';
+        this._spectrumCanvas.style.left = '0';
+        this._spectrumCanvas.style.display = 'block';
+        
+        // Set container position to relative for absolute positioning of canvases
+        this._domElement.style.position = 'relative';
         this._domElement.style.backgroundColor = this._preferences.background;
-        this._domElement.appendChild(this._canvas);
-        this._ctx = this._canvas.getContext('2d');
+        
+        // Add canvases to DOM
+        this._domElement.appendChild(this._gridCanvas);
+        this._domElement.appendChild(this._spectrumCanvas);
+        
+        // Get contexts
+        this._gridCtx = this._gridCanvas.getContext('2d');
+        this._spectrumCtx = this._spectrumCanvas.getContext('2d');
         
         // Setup resize observer
         this._resizeObserver = new ResizeObserver(() => this._updateCanvasSize());
@@ -89,7 +111,7 @@ class iSpectrumChart extends iControl {
         this._startAnimation();
 
         // Add click handler for peak hold reset
-        this._canvas.addEventListener('click', () => {
+        this._domElement.addEventListener('click', () => {
             this._peakHoldData.fill(-120);
         });
     }
@@ -98,11 +120,17 @@ class iSpectrumChart extends iControl {
         const rect = this._domElement.getBoundingClientRect();
         this._topBottomPadding = 20;
         this._leftPadding = 60;
-        this._rightPadding = 40;  // Add right padding
+        this._rightPadding = 40;
         
-        this._canvas.width = rect.width;
-        this._canvas.height = rect.height;
-        this._canvas.style.margin = '0';
+        // Update both canvases
+        this._gridCanvas.width = rect.width;
+        this._gridCanvas.height = rect.height;
+        this._gridCanvas.style.margin = '0';
+        
+        this._spectrumCanvas.width = rect.width;
+        this._spectrumCanvas.height = rect.height;
+        this._spectrumCanvas.style.margin = '0';
+        
         this._drawGrid();
     }
 
@@ -111,19 +139,18 @@ class iSpectrumChart extends iControl {
         const logMax = Math.log10(this._maxFreq);
         const logFreq = Math.log10(freq);
         return this._leftPadding + ((logFreq - logMin) / (logMax - logMin)) * 
-               (this._canvas.width - this._leftPadding - this._rightPadding);  // Account for right padding
+               (this._gridCanvas.width - this._leftPadding - this._rightPadding);
     }
 
     _dbToY(db) {
-        // Adjust Y calculation to account for padding
-        const availableHeight = this._canvas.height - (this._topBottomPadding * 2);
+        const availableHeight = this._gridCanvas.height - (this._topBottomPadding * 2);
         return this._topBottomPadding + 
                (1 - ((db - this._minDb) / (this._maxDb - this._minDb))) * availableHeight;
     }
-    
+
     _calculateDbStep() {
-        const minSpacing = 30;  // Minimum pixels between dB labels
-        const availableHeight = this._canvas.height - (this._topBottomPadding * 2);
+        const minSpacing = 30;
+        const availableHeight = this._gridCanvas.height - (this._topBottomPadding * 2);
         const dbRange = this._maxDb - this._minDb;
         const maxDivisions = Math.floor(availableHeight / minSpacing);
         const step = Math.ceil(dbRange / maxDivisions);
@@ -131,8 +158,8 @@ class iSpectrumChart extends iControl {
     }
 
     _drawGrid() {
-        const ctx = this._ctx;
-        ctx.clearRect(0, 0, this._canvas.width, this._canvas.height);
+        const ctx = this._gridCtx;
+        ctx.clearRect(0, 0, this._gridCanvas.width, this._gridCanvas.height);
         
         // Style setup
         ctx.strokeStyle = this._preferences.grid.normalLine.color;
@@ -141,19 +168,21 @@ class iSpectrumChart extends iControl {
         ctx.textAlign = 'right';
         ctx.textBaseline = 'middle';
         
-        // Use stored left padding
         const leftPadding = this._leftPadding;
+        const drawWidth = this._gridCanvas.width - leftPadding;
         
-        const drawWidth = this._canvas.width - leftPadding;
+        // Calculate min/max X coordinates first
+        const minX = this._freqToX(this._minFreq);
+        const maxX = this._freqToX(this._maxFreq);
         
-        // Define frequency bands for different ranges
-        const freqBandsBelow100 = Array.from({length: 9}, (_, i) => (i + 2) * 10); // 20,30,40...90
-        const freqBands100to1000 = Array.from({length: 9}, (_, i) => (i + 1) * 100); // 100,200,300...900
-        const freqBands1000to10000 = Array.from({length: 10}, (_, i) => (i + 1) * 1000); // 1000,2000...10000
+        // Define frequency bands and continue with existing code
+        const freqBandsBelow100 = Array.from({length: 9}, (_, i) => (i + 2) * 10);
+        const freqBands100to1000 = Array.from({length: 9}, (_, i) => (i + 1) * 100);
+        const freqBands1000to10000 = Array.from({length: 10}, (_, i) => (i + 1) * 1000);
         const labeledFreqs = [100, 1000, 10000];
-        const emphasizedFreqs = [100, 1000, 10000];  // Frequencies that get thicker lines
+        const emphasizedFreqs = [100, 1000, 10000];
 
-        // Draw regular frequency lines
+        // Draw regular frequency lines (keep only this version of drawFreqLine)
         const drawFreqLine = (freq, isLabeled) => {
             const x = this._freqToX(freq);
             if (freq >= this._maxFreq) return;
@@ -166,7 +195,7 @@ class iSpectrumChart extends iControl {
                 this._preferences.grid.emphasizedLine.color : 
                 this._preferences.grid.normalLine.color;
             ctx.moveTo(x, this._topBottomPadding);
-            ctx.lineTo(x, this._canvas.height - this._topBottomPadding);
+            ctx.lineTo(x, this._gridCanvas.height - this._topBottomPadding);  // Fixed reference
             ctx.stroke();
             
             if (isLabeled || emphasizedFreqs.includes(freq)) {
@@ -178,26 +207,24 @@ class iSpectrumChart extends iControl {
                 let label = freq.toString();
                 if (freq === 1000) label = '1K';
                 if (freq === 10000) label = '10K';
-                ctx.fillText(label, x, this._canvas.height - 5);
+                ctx.fillText(label, x, this._gridCanvas.height - 5);  // Fixed reference
             }
         };
 
         // Draw min/max frequency lines with emphasis
         ctx.beginPath();
-        ctx.lineWidth = 2;  // Changed from 3 to 2
+        ctx.lineWidth = 2;
         ctx.strokeStyle = '#999';
         
         // Min frequency (20 Hz)
-        const minX = this._freqToX(this._minFreq);
         ctx.moveTo(minX, this._topBottomPadding);
-        ctx.lineTo(minX, this._canvas.height - this._topBottomPadding);
+        ctx.lineTo(minX, this._gridCanvas.height - this._topBottomPadding);
         ctx.stroke();
         
         // Max frequency (20K)
-        const maxX = this._freqToX(this._maxFreq);
         ctx.beginPath();
         ctx.moveTo(maxX, this._topBottomPadding);
-        ctx.lineTo(maxX, this._canvas.height - this._topBottomPadding);
+        ctx.lineTo(maxX, this._gridCanvas.height - this._topBottomPadding);  // Fixed reference
         ctx.stroke();
         
         // Draw emphasized frequency labels
@@ -205,8 +232,8 @@ class iSpectrumChart extends iControl {
         ctx.font = `${emphasizedFont.weight} ${emphasizedFont.size}px "${emphasizedFont.font}"`;
         ctx.textAlign = 'center';
         ctx.fillStyle = this._preferences.text.color;
-        ctx.fillText('20', minX, this._canvas.height - 5);
-        ctx.fillText('20K', maxX, this._canvas.height - 5);
+        ctx.fillText('20', minX, this._gridCanvas.height - 5);  // Fixed reference
+        ctx.fillText('20K', maxX, this._gridCanvas.height - 5);  // Fixed reference
         
         // Restore styles for regular grid
         ctx.strokeStyle = '#ccc';
@@ -343,13 +370,12 @@ class iSpectrumChart extends iControl {
     }
 
     _drawFrame() {
-        const ctx = this._ctx;
+        const ctx = this._spectrumCtx;
         const currentTime = performance.now();
         const currentFPS = this._calculateFPS();
         
-        // Clear canvas and draw grid
-        ctx.clearRect(0, 0, this._canvas.width, this._canvas.height);
-        this._drawGrid();
+        // Clear only spectrum canvas
+        ctx.clearRect(0, 0, this._spectrumCanvas.width, this._spectrumCanvas.height);
         
         // Draw spectrum with configured colors
         ctx.beginPath();
@@ -405,11 +431,11 @@ class iSpectrumChart extends iControl {
         ctx.font = `${this._preferences.text.normal.weight} ${this._preferences.text.normal.size}px ${this._preferences.text.normal.font}`;
         ctx.textAlign = 'right';
         ctx.fillStyle = this._preferences.text.color;
-        ctx.fillText(`${currentFPS} FPS`, this._canvas.width - 10, 15);
+        ctx.fillText(`${currentFPS} FPS`, this._spectrumCanvas.width - 10, 15);
     }
     
     _drawInitialSpectrum() {
-        const ctx = this._ctx;
+        const ctx = this._spectrumCtx;
         
         ctx.beginPath();
         ctx.strokeStyle = this._preferences.spectrum.lineColor;
@@ -429,6 +455,7 @@ class iSpectrumChart extends iControl {
         if (preferences.decayTime) {
             this._decayTimeConstant = preferences.decayTime;
         }
+        // Redraw only the grid when preferences change
         this._drawGrid();
     }
 }
