@@ -8,15 +8,16 @@ class iSpectrumChart extends iControl {
         // Get decay time from options or use default (5000ms)
         const decayTime = Number(options.decayTime) || 5000;
         
+        // Create spectrum layers collection
+        this._spectrumLayers = new Map();
+        
         // Update decay properties for exponential decay
-        this._decayData = new Array(200).fill({ value: -120, startTime: 0 });
         this._decayTimeConstant = decayTime; // tau in milliseconds
         
         // Add FPS tracking and animation properties
         this._frameCount = 0;
         this._lastTime = performance.now();
         this._fps = 0;
-        this._currentData = new Array(200).fill(-120);
         this._isAnimating = false;
         
         // Default values
@@ -112,7 +113,10 @@ class iSpectrumChart extends iControl {
 
         // Add click handler for peak hold reset
         this._domElement.addEventListener('click', () => {
-            this._peakHoldData.fill(-120);
+            // Reset peak hold data for all spectrum layers
+            for (const spectrum of this._spectrumLayers.values()) {
+                spectrum.peakHoldData.fill(-120);
+            }
         });
     }
     
@@ -348,20 +352,51 @@ class iSpectrumChart extends iControl {
         requestAnimationFrame(() => this._animate());
     }
 
-    // Keep only this version of updateSpectrum
-    updateSpectrum(data) {
+    // Add new methods for spectrum management
+    addSpectrum(id, options = {}) {
+        const defaultSpectrum = {
+            zIndex: this._spectrumLayers.size,
+            decayData: new Array(8192).fill({ value: -120, startTime: 0 }),
+            peakHoldData: new Array(8192).fill(-120),
+            isPeakHoldEnabled: true,
+            preferences: {
+                lineColor: '#2196F3',
+                fillColor: 'rgba(33, 150, 243, 0.3)',
+                peakColor: '#FF5722'
+            }
+        };
+
+        const spectrum = { ...defaultSpectrum, ...options };
+        this._spectrumLayers.set(id, spectrum);
+    }
+
+    removeSpectrum(id) {
+        this._spectrumLayers.delete(id);
+    }
+
+    // Update existing updateSpectrum method
+    updateSpectrum(id, data) {
+        const spectrum = this._spectrumLayers.get(id);
+        if (!spectrum) return;
+    
         const currentTime = performance.now();
         
+        // Ensure decay and peak data arrays match input data length
+        if (spectrum.decayData.length !== data.length) {
+            spectrum.decayData = new Array(data.length).fill({ value: -120, startTime: 0 });
+            spectrum.peakHoldData = new Array(data.length).fill(-120);
+        }
+        
         // Update peak hold data
-        if (this._isPeakHoldEnabled) {
-            this._peakHoldData = this._peakHoldData.map((peak, i) => 
+        if (spectrum.isPeakHoldEnabled) {
+            spectrum.peakHoldData = spectrum.peakHoldData.map((peak, i) => 
                 Math.max(peak, data[i]));
         }
         
         // Update values, keeping track of decay
         for (let i = 0; i < data.length; i++) {
-            if (data[i] > this._decayData[i].value) {
-                this._decayData[i] = {
+            if (data[i] > spectrum.decayData[i].value) {
+                spectrum.decayData[i] = {
                     value: data[i],
                     startTime: currentTime
                 };
@@ -369,62 +404,74 @@ class iSpectrumChart extends iControl {
         }
     }
 
+    // Update _drawFrame method to handle variable data length
     _drawFrame() {
         const ctx = this._spectrumCtx;
         const currentTime = performance.now();
         const currentFPS = this._calculateFPS();
         
-        // Clear only spectrum canvas
+        // Clear canvas
         ctx.clearRect(0, 0, this._spectrumCanvas.width, this._spectrumCanvas.height);
         
-        // Draw spectrum with configured colors
-        ctx.beginPath();
-        ctx.strokeStyle = this._preferences.spectrum.lineColor;
-        ctx.fillStyle = this._preferences.spectrum.fillColor;
-        ctx.lineWidth = 2;
+        // Sort spectrums by z-index
+        const sortedSpectrums = Array.from(this._spectrumLayers.entries())
+            .sort((a, b) => a[1].zIndex - b[1].zIndex);
         
-        const startX = this._freqToX(this._minFreq);
-        const bottomY = this._dbToY(this._minDb);
-        ctx.moveTo(startX, bottomY);
-        
-        // Draw spectrum with exponential decay
-        for (let i = 0; i < this._decayData.length; i++) {
-            const freq = this._minFreq * Math.pow(this._maxFreq / this._minFreq, i / (this._decayData.length - 1));
-            const elapsed = currentTime - this._decayData[i].startTime;
-            
-            // Calculate exponential decay
-            const initialValue = this._decayData[i].value;
-            const decayFactor = Math.exp(-elapsed / this._decayTimeConstant);
-            let currentValue = this._minDb + (initialValue - this._minDb) * decayFactor;
-            currentValue = Math.max(currentValue, this._minDb);
-            this._decayData[i].value = currentValue;  // Update value for next frame
-            
-            ctx.lineTo(this._freqToX(freq), this._dbToY(currentValue));
-        }
-        
-        // Complete the path
-        ctx.lineTo(this._freqToX(this._maxFreq), bottomY);
-        ctx.fill();
-        ctx.stroke();
-
-        // Draw peak hold
-        if (this._isPeakHoldEnabled) {
+        // Draw each spectrum
+        for (const [id, spectrum] of sortedSpectrums) {
+            // Draw spectrum with configured colors
             ctx.beginPath();
-            ctx.strokeStyle = this._preferences.spectrum.peakColor;
+            ctx.strokeStyle = spectrum.preferences.lineColor;
+            ctx.fillStyle = spectrum.preferences.fillColor;
             ctx.lineWidth = 2;
             
-            for (let i = 0; i < this._peakHoldData.length; i++) {
-                const freq = this._minFreq * Math.pow(this._maxFreq / this._minFreq, i / (this._peakHoldData.length - 1));
-                const x = this._freqToX(freq);
-                const y = this._dbToY(this._peakHoldData[i]);
+            const startX = this._freqToX(this._minFreq);
+            const bottomY = this._dbToY(this._minDb);
+            ctx.moveTo(startX, bottomY);
+            
+            // Draw spectrum with exponential decay
+            const dataLength = spectrum.decayData.length;
+            for (let i = 0; i < dataLength; i++) {
+                // Calculate frequency linearly for this data point
+                const freq = this._minFreq + (i * (this._maxFreq - this._minFreq) / (dataLength - 1));
                 
-                if (i === 0) {
-                    ctx.moveTo(x, y);
-                } else {
-                    ctx.lineTo(x, y);
-                }
+                const elapsed = currentTime - spectrum.decayData[i].startTime;
+                
+                // Calculate exponential decay
+                const initialValue = spectrum.decayData[i].value;
+                const decayFactor = Math.exp(-elapsed / this._decayTimeConstant);
+                let currentValue = this._minDb + (initialValue - this._minDb) * decayFactor;
+                currentValue = Math.max(currentValue, this._minDb);
+                spectrum.decayData[i].value = currentValue;
+                
+                ctx.lineTo(this._freqToX(freq), this._dbToY(currentValue));
             }
+            
+            // Complete the path
+            ctx.lineTo(this._freqToX(this._maxFreq), bottomY);
+            ctx.fill();
             ctx.stroke();
+    
+            // Draw peak hold with variable data length
+            if (spectrum.isPeakHoldEnabled) {
+                ctx.beginPath();
+                ctx.strokeStyle = spectrum.preferences.peakColor;
+                ctx.lineWidth = 2;
+                
+                for (let i = 0; i < spectrum.peakHoldData.length; i++) {
+                    // Use linear frequency spacing for peak hold line
+                    const freq = this._minFreq + (i * (this._maxFreq - this._minFreq) / (spectrum.peakHoldData.length - 1));
+                    const x = this._freqToX(freq);
+                    const y = this._dbToY(spectrum.peakHoldData[i]);
+                    
+                    if (i === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                }
+                ctx.stroke();
+            }
         }
         
         // Draw FPS counter

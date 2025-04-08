@@ -56,6 +56,38 @@
                        min="0" max="100" value="50">
             </div>
             
+            <!-- Add spectrum layer controls -->
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="spectrum1-toggle" checked>
+                                <label class="form-check-label" for="spectrum1-toggle">Spectrum 1</label>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <label for="spectrum1-zindex" class="form-label">Z-Index</label>
+                            <input type="range" class="form-range" id="spectrum1-zindex" min="0" max="10" value="0">
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="spectrum2-toggle" checked>
+                                <label class="form-check-label" for="spectrum2-toggle">Spectrum 2</label>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <label for="spectrum2-zindex" class="form-label">Z-Index</label>
+                            <input type="range" class="form-range" id="spectrum2-zindex" min="0" max="10" value="1">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
             <div id="spectrum-chart" 
                 style="width: 100%; height: 400px; margin: 0 auto;" 
                 data-controltype="spectrum-chart" 
@@ -69,6 +101,83 @@
                     const chart = GetControlById("spectrum-chart");
                     const decaySlider = document.getElementById('decay-time-slider');
                     const decayDisplay = document.getElementById('decay-time-display');
+                    
+                    // Add two spectrum layers
+                    chart.addSpectrum('spectrum1', {
+                        zIndex: 0,
+                        preferences: {
+                            lineColor: '#FF4081',
+                            fillColor: 'rgba(255, 64, 129, 0.3)',
+                            peakColor: '#FFC107'
+                        }
+                    });
+
+                    chart.addSpectrum('spectrum2', {
+                        zIndex: 1,
+                        preferences: {
+                            lineColor: '#4CAF50',
+                            fillColor: 'rgba(76, 175, 80, 0.3)',
+                            peakColor: '#FF5722'
+                        }
+                    });
+
+                    // Setup spectrum toggle controls
+                    const spectrum1Toggle = document.getElementById('spectrum1-toggle');
+                    const spectrum2Toggle = document.getElementById('spectrum2-toggle');
+                    const spectrum1ZIndex = document.getElementById('spectrum1-zindex');
+                    const spectrum2ZIndex = document.getElementById('spectrum2-zindex');
+
+                    spectrum1Toggle.addEventListener('change', (e) => {
+                        if (e.target.checked) {
+                            chart.addSpectrum('spectrum1', {
+                                zIndex: parseInt(spectrum1ZIndex.value),
+                                preferences: {
+                                    lineColor: '#FF4081',
+                                    fillColor: 'rgba(255, 64, 129, 0.3)',
+                                    peakColor: '#FFC107'
+                                }
+                            });
+                        } else {
+                            chart.removeSpectrum('spectrum1');
+                        }
+                    });
+
+                    spectrum2Toggle.addEventListener('change', (e) => {
+                        if (e.target.checked) {
+                            chart.addSpectrum('spectrum2', {
+                                zIndex: parseInt(spectrum2ZIndex.value),
+                                preferences: {
+                                    lineColor: '#4CAF50',
+                                    fillColor: 'rgba(76, 175, 80, 0.3)',
+                                    peakColor: '#FF5722'
+                                }
+                            });
+                        } else {
+                            chart.removeSpectrum('spectrum2');
+                        }
+                    });
+
+                    spectrum1ZIndex.addEventListener('input', (e) => {
+                        chart.addSpectrum('spectrum1', {
+                            zIndex: parseInt(e.target.value),
+                            preferences: {
+                                lineColor: '#FF4081',
+                                fillColor: 'rgba(255, 64, 129, 0.3)',
+                                peakColor: '#FFC107'
+                            }
+                        });
+                    });
+
+                    spectrum2ZIndex.addEventListener('input', (e) => {
+                        chart.addSpectrum('spectrum2', {
+                            zIndex: parseInt(e.target.value),
+                            preferences: {
+                                lineColor: '#4CAF50',
+                                fillColor: 'rgba(76, 175, 80, 0.3)',
+                                peakColor: '#FF5722'
+                            }
+                        });
+                    });
                     
                     // Convert slider value (0-100) to decay time (100ms-10000ms) logarithmically
                     const getDecayTime = (sliderValue) => {
@@ -113,29 +222,34 @@
                             }
                         },
                         background: 'rgb(225,225,225)',
-                        spectrum: {
-                            lineColor: '#FF4081',
-                            fillColor: 'rgba(255, 64, 129, 0.3)',
-                            peakColor: '#FFC107'  // Yellow peak hold line
-                        },
                         decayTime: getDecayTime(50) // Initial decay time
                     });
 
-                    // Generate spectrum data every 100ms
+                    // Generate different spectrum data for each layer
                     setInterval(() => {
-                        // Create array with logarithmically spaced frequencies
-                        const data = new Array(200).fill(0).map((_, index) => {
-                            // Calculate frequency for this point (logarithmic distribution)
-                            const freq = 20 * Math.pow(1000, index / 199);
-                            // Generate a smooth curve with some randomness
+                        // Calculate number of points needed (20Hz to 20000Hz, step 5Hz)
+                        const numPoints = Math.floor((20000 - 20) / 5) + 1;
+                        
+                        // Data for spectrum1 (higher frequencies emphasized)
+                        const data1 = new Array(numPoints).fill(0).map((_, index) => {
+                            const freq = 20 + (index * 5); // Linear spacing every 5Hz
                             const baseLevel = -80;
                             const randomVariation = Math.random() * 40;
-                            // Add some frequency-dependent variation
                             const freqFactor = Math.sin(2 * Math.PI * freq / 1000) * 20;
                             return baseLevel + randomVariation + freqFactor;
                         });
                         
-                        chart.updateSpectrum(data);
+                        // Data for spectrum2 (lower frequencies emphasized)
+                        const data2 = new Array(numPoints).fill(0).map((_, index) => {
+                            const freq = 20 + (index * 5); // Linear spacing every 5Hz
+                            const baseLevel = -100;
+                            const randomVariation = Math.random() * 30;
+                            const freqFactor = Math.cos(2 * Math.PI * freq / 500) * 30;
+                            return baseLevel + randomVariation + freqFactor;
+                        });
+                        
+                        chart.updateSpectrum('spectrum1', data1);
+                        chart.updateSpectrum('spectrum2', data2);
                     }, 50);
                 });
             </script>
