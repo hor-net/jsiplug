@@ -228,6 +228,20 @@ function SetupControls() {
                     "redifabove": control.getAttribute('data-redifabove'),
                 }));
                 break;
+            case 'spectrum-chart':
+                AddControl(new iSpectrumChart({
+                    "id": control.id,
+                    "minDb": control.getAttribute('data-mindb'),
+                    "maxDb": control.getAttribute('data-maxdb'),
+                    "messageId": control.getAttribute("data-messageid")
+                }));
+                break;
+            
+            default:
+                var controlname = "new i"+control.getAttribute('data-controltype')+'({"id": control.id, "paramData":paramData}, paramData.id)';
+                console.log(controlname);
+                AddControl( eval(controlname) );
+                break;
         }
     });
     // now attach all the controls linked to a parameter id
@@ -301,5 +315,5 @@ function SetupControls() {
 // attach all the controls, both those with a parameter id and those
 // with a message id (not linked to a parameter)
 addEventListener('DOMContentLoaded', (event) => {
-  //SetupControls();
+  SetupControls();
 });
