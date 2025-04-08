@@ -419,7 +419,6 @@ class iSpectrumChart extends iControl {
         
         // Draw each spectrum
         for (const [id, spectrum] of sortedSpectrums) {
-            // Draw spectrum with configured colors
             ctx.beginPath();
             ctx.strokeStyle = spectrum.preferences.lineColor;
             ctx.fillStyle = spectrum.preferences.fillColor;
@@ -428,27 +427,51 @@ class iSpectrumChart extends iControl {
             const startX = this._freqToX(this._minFreq);
             const bottomY = this._dbToY(this._minDb);
             ctx.moveTo(startX, bottomY);
-            
-            // Draw spectrum with exponential decay
+
+            // Create points array for curve
+            const points = [];
             const dataLength = spectrum.decayData.length;
+            
+            // Collect points for the curve
             for (let i = 0; i < dataLength; i++) {
-                // Calculate frequency linearly for this data point
                 const freq = this._minFreq + (i * (this._maxFreq - this._minFreq) / (dataLength - 1));
-                
                 const elapsed = currentTime - spectrum.decayData[i].startTime;
                 
-                // Calculate exponential decay
                 const initialValue = spectrum.decayData[i].value;
                 const decayFactor = Math.exp(-elapsed / this._decayTimeConstant);
                 let currentValue = this._minDb + (initialValue - this._minDb) * decayFactor;
                 currentValue = Math.max(currentValue, this._minDb);
                 spectrum.decayData[i].value = currentValue;
                 
-                ctx.lineTo(this._freqToX(freq), this._dbToY(currentValue));
+                points.push({
+                    x: this._freqToX(freq),
+                    y: this._dbToY(currentValue)
+                });
             }
+
+            // Draw smooth curve through points
+            ctx.moveTo(points[0].x, points[0].y);
             
-            // Complete the path
+            // Draw curved segments
+            for (let i = 0; i < points.length - 1; i++) {
+                const current = points[i];
+                const next = points[i + 1];
+                
+                // Calculate control points for smooth curve
+                const controlX = (current.x + next.x) / 2;
+                ctx.quadraticCurveTo(
+                    current.x,
+                    current.y,
+                    controlX,
+                    next.y
+                );
+            }
+
+            // Complete the path to bottom
             ctx.lineTo(this._freqToX(this._maxFreq), bottomY);
+            ctx.lineTo(startX, bottomY);
+            
+            // Fill and stroke
             ctx.fill();
             ctx.stroke();
     
@@ -458,18 +481,33 @@ class iSpectrumChart extends iControl {
                 ctx.strokeStyle = spectrum.preferences.peakColor;
                 ctx.lineWidth = 2;
                 
+                // Collect peak hold points
+                const peakPoints = [];
                 for (let i = 0; i < spectrum.peakHoldData.length; i++) {
-                    // Use linear frequency spacing for peak hold line
                     const freq = this._minFreq + (i * (this._maxFreq - this._minFreq) / (spectrum.peakHoldData.length - 1));
-                    const x = this._freqToX(freq);
-                    const y = this._dbToY(spectrum.peakHoldData[i]);
-                    
-                    if (i === 0) {
-                        ctx.moveTo(x, y);
-                    } else {
-                        ctx.lineTo(x, y);
-                    }
+                    peakPoints.push({
+                        x: this._freqToX(freq),
+                        y: this._dbToY(spectrum.peakHoldData[i])
+                    });
                 }
+
+                // Draw smooth curve through peak points
+                ctx.moveTo(peakPoints[0].x, peakPoints[0].y);
+                
+                // Draw curved segments for peak hold
+                for (let i = 0; i < peakPoints.length - 1; i++) {
+                    const current = peakPoints[i];
+                    const next = peakPoints[i + 1];
+                    
+                    const controlX = (current.x + next.x) / 2;
+                    ctx.quadraticCurveTo(
+                        current.x,
+                        current.y,
+                        controlX,
+                        next.y
+                    );
+                }
+                
                 ctx.stroke();
             }
         }
