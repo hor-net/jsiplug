@@ -227,12 +227,13 @@
 
                     // Generate different spectrum data for each layer
                     setInterval(() => {
-                        // Calculate number of points needed (20Hz to 20000Hz, step 5Hz)
+                        // Calculate frequencies (20Hz to 20000Hz, step 5Hz)
                         const numPoints = Math.floor((20000 - 20) / 5) + 1;
+                        const frequencies = new Array(numPoints).fill(0).map((_, index) => 20 + (index * 5));
                         
                         // Data for spectrum1 (higher frequencies emphasized)
                         const data1 = new Array(numPoints).fill(0).map((_, index) => {
-                            const freq = 20 + (index * 5); // Linear spacing every 5Hz
+                            const freq = frequencies[index];
                             const baseLevel = -80;
                             const randomVariation = Math.random() * 40;
                             const freqFactor = Math.sin(2 * Math.PI * freq / 1000) * 20;
@@ -241,15 +242,15 @@
                         
                         // Data for spectrum2 (lower frequencies emphasized)
                         const data2 = new Array(numPoints).fill(0).map((_, index) => {
-                            const freq = 20 + (index * 5); // Linear spacing every 5Hz
+                            const freq = frequencies[index];
                             const baseLevel = -100;
                             const randomVariation = Math.random() * 30;
                             const freqFactor = Math.cos(2 * Math.PI * freq / 500) * 30;
                             return baseLevel + randomVariation + freqFactor;
                         });
                         
-                        chart.updateSpectrum('spectrum1', data1);
-                        chart.updateSpectrum('spectrum2', data2);
+                        chart.updateSpectrum('spectrum1', data1, frequencies);
+                        chart.updateSpectrum('spectrum2', data2, frequencies);
                     }, 50);
                 });
             </script>
@@ -260,3 +261,29 @@
         <script type="text/javascript" src="iSpectrumChart.js"></script>
     </body>
 </html>
+
+<script>
+    // Create frequency array (example with logarithmic distribution)
+    const numPoints = 100;
+    const frequencies = new Array(numPoints).fill(0).map((_, i) => {
+        return Math.pow(10, Math.log10(20) + (i / (numPoints - 1)) * (Math.log10(20000) - Math.log10(20)));
+    });
+
+    // Create sample spectrum data
+    const spectrumData = new Array(numPoints).fill(0).map((_, i) => {
+        return -50 + 30 * Math.sin(i * 0.1);
+    });
+
+    // Create peak hold data
+    const peakHoldData = spectrumData.map(v => v + 10);
+
+    // Update the chart with all three arrays
+    chart.updateSpectrum(spectrumData, peakHoldData, frequencies);
+
+    // Example of periodic updates
+    setInterval(() => {
+        const newData = spectrumData.map(v => v + Math.random() * 10 - 5);
+        const newPeakHold = newData.map(v => v + 5);
+        chart.updateSpectrum(newData, newPeakHold, frequencies);
+    }, 100);
+</script>

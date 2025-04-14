@@ -371,11 +371,13 @@ class iSpectrumChart extends iControl {
     }
 
     // Add new methods for spectrum management
+    // Update the addSpectrum method to include frequencies array
     addSpectrum(id, options = {}) {
         const defaultSpectrum = {
             zIndex: this._spectrumLayers.size,
             decayData: new Array(8192).fill({ value: -120, startTime: 0 }),
             peakHoldData: new Array(8192).fill(-120),
+            frequencies: null,  // Add frequencies array
             isPeakHoldEnabled: true,
             preferences: {
                 lineColor: '#2196F3',
@@ -383,21 +385,26 @@ class iSpectrumChart extends iControl {
                 peakColor: '#FF5722'
             }
         };
-
+    
         const spectrum = { ...defaultSpectrum, ...options };
         this._spectrumLayers.set(id, spectrum);
     }
-
+    
     removeSpectrum(id) {
         this._spectrumLayers.delete(id);
     }
 
-    // Update existing updateSpectrum method
-    updateSpectrum(id, data) {
+    // Update the updateSpectrum method to accept frequencies
+    updateSpectrum(id, data, frequencies) {
         const spectrum = this._spectrumLayers.get(id);
         if (!spectrum) return;
     
         const currentTime = performance.now();
+        
+        // Update frequencies if provided
+        if (frequencies) {
+            spectrum.frequencies = frequencies;
+        }
         
         // Ensure decay and peak data arrays match input data length
         if (spectrum.decayData.length !== data.length) {
@@ -452,7 +459,9 @@ class iSpectrumChart extends iControl {
             
             // Collect points for the curve
             for (let i = 0; i < dataLength; i++) {
-                const freq = this._minFreq + (i * (this._maxFreq - this._minFreq) / (dataLength - 1));
+                const freq = spectrum.frequencies ? 
+                            spectrum.frequencies[i] : 
+                            this._minFreq + (i * (this._maxFreq - this._minFreq) / (dataLength - 1));
                 const elapsed = currentTime - spectrum.decayData[i].startTime;
                 
                 const initialValue = spectrum.decayData[i].value;
@@ -502,7 +511,9 @@ class iSpectrumChart extends iControl {
                 // Collect peak hold points
                 const peakPoints = [];
                 for (let i = 0; i < spectrum.peakHoldData.length; i++) {
-                    const freq = this._minFreq + (i * (this._maxFreq - this._minFreq) / (spectrum.peakHoldData.length - 1));
+                    const freq = spectrum.frequencies ? 
+                                spectrum.frequencies[i] : 
+                                this._minFreq + (i * (this._maxFreq - this._minFreq) / (spectrum.peakHoldData.length - 1));
                     peakPoints.push({
                         x: this._freqToX(freq),
                         y: this._dbToY(spectrum.peakHoldData[i])
@@ -624,6 +635,8 @@ class iSpectrumChart extends iControl {
         this._tooltip.style.display = 'none';
     }
 }
+
+
 
 
 
