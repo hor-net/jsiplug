@@ -9,19 +9,27 @@ var paramValues = [];
 
 // event queue
 var eventQueue = [];
+// param change queue
+var paramQueue = [];
 
 var setupReady = false;
 
 // FROM DELEGATE
 function SPVFD(paramIdx, val) {
   console.log("paramIdx: " + paramIdx + " value:" + val);
-  OnParamChange(paramIdx, val);
+  if(setupReady) {
+    OnParamChange(paramIdx, val);
+  } else {
+    paramQueue.push([paramIdx,val]);
+  }
 }
 
 function SCVFD(ctrlTag, val) {
+  const event = new CustomEvent("ControlChange", {detail:{tag: ctrlTag, value: val}});
   if(setupReady) {
-    const event = new CustomEvent("ControlChange", {detail:{tag: ctrlTag, value: val}});
     dispatchEvent(event);
+  } else {
+    eventQueue.push(event);
   }
 }
 
@@ -297,7 +305,13 @@ function SetupControls() {
         dispatchEvent(eventQueue[i]);
       }
       
+      for (var i = 0; i < paramQueue.length; i++) {
+        OnParamChange(paramQueue[i][0], paramQueue[i][1]);
+      }
+      
       eventQueue = [];
+      paramQueue = [];
+      
       
       addEventListener('ControlChange', (event)=> {
         GetControlByMessageId(event.detail.tag).forEach(function(elem){
