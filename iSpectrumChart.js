@@ -118,6 +118,24 @@ class iSpectrumChart extends iControl {
                 spectrum.peakHoldData.fill(-120);
             }
         });
+
+        // Add tooltip elements and properties
+        this._tooltip = document.createElement('div');
+        this._tooltip.style.position = 'absolute';
+        this._tooltip.style.display = 'none';
+        this._tooltip.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+        this._tooltip.style.color = 'white';
+        this._tooltip.style.padding = '8px';
+        this._tooltip.style.borderRadius = '4px';
+        this._tooltip.style.fontSize = '12px';
+        this._tooltip.style.pointerEvents = 'none';
+        this._domElement.appendChild(this._tooltip);
+
+        this._tooltipTimeout = null;
+
+        // Add mouse event listeners
+        this._domElement.addEventListener('mousemove', this._handleMouseMove.bind(this));
+        this._domElement.addEventListener('mouseout', this._handleMouseOut.bind(this));
     }
     
     _updateCanvasSize() {
@@ -543,7 +561,70 @@ class iSpectrumChart extends iControl {
         // Redraw only the grid when preferences change
         this._drawGrid();
     }
+
+    _handleMouseMove(event) {
+
+    
+        // Clear any existing timeout
+        if (this._tooltipTimeout) {
+            clearTimeout(this._tooltipTimeout);
+        }
+        
+        // Get mouse position relative to canvas
+        const rect = this._gridCanvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+    
+        // Only show tooltip if mouse is in the chart area
+        if (x >= this._leftPadding && 
+            x <= this._gridCanvas.width - this._rightPadding &&
+            y >= this._topBottomPadding && 
+            y <= this._gridCanvas.height - this._topBottomPadding) {
+            
+            // Set timeout for tooltip display
+            this._tooltipTimeout = setTimeout(() => {
+                // Calculate frequency and dB values
+                const freq = Math.pow(10, 
+                    (x - this._leftPadding) / 
+                    (this._gridCanvas.width - this._leftPadding - this._rightPadding) * 
+                    (Math.log10(this._maxFreq) - Math.log10(this._minFreq)) + 
+                    Math.log10(this._minFreq)
+                );
+                
+                const db = this._maxDb - 
+                          ((y - this._topBottomPadding) / 
+                          (this._gridCanvas.height - 2 * this._topBottomPadding)) * 
+                          (this._maxDb - this._minDb);
+    
+                // Format the values
+                const freqDisplay = freq < 1000 ? 
+                                  `${Math.round(freq)}Hz` : 
+                                  `${(freq/1000).toFixed(1)}kHz`;
+                const dbDisplay = `${db.toFixed(1)}dB`;
+    
+                // Update tooltip content and position
+                this._tooltip.textContent = `${freqDisplay}, ${dbDisplay}`;
+                this._tooltip.style.display = 'block';
+                
+                // Position tooltip avoiding screen edges
+                const tooltipX = event.offsetX + 10;
+                const tooltipY = event.offsetY + 10;
+                
+                this._tooltip.style.left = `${tooltipX}px`;
+                this._tooltip.style.top = `${tooltipY}px`;
+                this._tooltip.style.zIndex = 1000;
+            }, 500);
+        }
+    }
+    
+    _handleMouseOut() {
+        if (this._tooltipTimeout) {
+            clearTimeout(this._tooltipTimeout);
+        }
+        this._tooltip.style.display = 'none';
+    }
 }
+
 
 
 
