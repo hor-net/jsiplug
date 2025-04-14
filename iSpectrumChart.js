@@ -298,14 +298,14 @@ class iSpectrumChart extends iControl {
             if (db === this._minDb || db === this._maxDb) continue;
             const y = this._dbToY(db);
             
-            // Update line drawing to account for left padding and max frequency
             ctx.beginPath();
             ctx.lineWidth = 0.5;
             ctx.moveTo(leftPadding, y);
-            ctx.lineTo(this._freqToX(this._maxFreq), y);  // Stop at max frequency
+            ctx.lineTo(this._freqToX(this._maxFreq), y);
             ctx.stroke();
             
             ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';  // Add this for regular labels
             ctx.fillText(`${db}`, leftPadding - 5, y);
         }
         
@@ -315,29 +315,31 @@ class iSpectrumChart extends iControl {
         
         // Draw emphasized lines
         ctx.beginPath();
-        ctx.lineWidth = 2;  // Changed from 3 to 2
+        ctx.lineWidth = 2;
         ctx.strokeStyle = '#999';
         
         // Min line
         ctx.moveTo(leftPadding, minY);
-        ctx.lineTo(this._freqToX(this._maxFreq), minY);  // Stop at max frequency
+        ctx.lineTo(this._freqToX(this._maxFreq), minY);
         ctx.stroke();
         
         // Max line
         ctx.beginPath();
         ctx.moveTo(leftPadding, maxY);
-        ctx.lineTo(this._freqToX(this._maxFreq), maxY);  // Stop at max frequency
+        ctx.lineTo(this._freqToX(this._maxFreq), maxY);
         ctx.stroke();
         
-        // Draw emphasized labels with more space
+        // Draw emphasized labels
         ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';  // Ensure consistent baseline
         ctx.font = `${emphasizedFont.weight} ${emphasizedFont.size}px "${emphasizedFont.font}"`;
-        ctx.fillText(`${this._minDb}`, leftPadding - 15, minY);
-        ctx.fillText(`${this._maxDb}`, leftPadding - 15, maxY);
+        ctx.fillText(`${this._minDb}`, leftPadding - 5, minY);  // Use same padding as regular labels
+        ctx.fillText(`${this._maxDb}`, leftPadding - 5, maxY);  // Use same padding as regular labels
         
         // Restore original styles
         ctx.strokeStyle = '#ccc';
         ctx.font = '12px Arial';
+        ctx.textBaseline = 'middle';  // Keep consistent text baseline for all labels
     }
     
     // Method to update spectrum data
@@ -382,14 +384,16 @@ class iSpectrumChart extends iControl {
             preferences: {
                 lineColor: '#2196F3',
                 fillColor: 'rgba(33, 150, 243, 0.3)',
-                peakColor: '#FF5722'
+                peakColor: '#FF5722',
+                showFill: true,
+                showPeak: true  // Add this new option
             }
         };
     
         const spectrum = { ...defaultSpectrum, ...options };
         this._spectrumLayers.set(id, spectrum);
     }
-    
+
     removeSpectrum(id) {
         this._spectrumLayers.delete(id);
     }
@@ -430,6 +434,58 @@ class iSpectrumChart extends iControl {
     }
 
     // Update _drawFrame method to handle variable data length
+    // Add this helper method after _calculateDbStep and before _drawGrid
+    // Add this helper method before _interpolatePoints
+    _reduceSpectrumData(points, tolerance = 0.1) {
+        if (points.length < 2) return points;
+        
+        const reduced = [points[0]];
+        let lastValue = points[0].y;
+        let lastX = points[0].x;
+        
+        for (let i = 1; i < points.length - 1; i++) {
+            const diff = Math.abs(points[i].y - lastValue);
+            // Make tolerance stricter for lower frequencies (left side)
+            const dynamicTolerance = tolerance * (1 + (points[i].x - points[0].x) / (points[points.length - 1].x - points[0].x));
+            const xDiff = Math.abs(points[i].x - lastX);
+            
+            if (diff > dynamicTolerance || xDiff > 20) {  // Add minimum x-spacing check
+                reduced.push(points[i]);
+                lastValue = points[i].y;
+                lastX = points[i].x;
+            }
+        }
+        
+        reduced.push(points[points.length - 1]);
+        return reduced;
+    }
+
+    _interpolatePoints(points) {
+        if (points.length < 2) return points;
+        
+        const result = [];
+        result.push(points[0]);
+        
+        for (let i = 0; i < points.length - 1; i++) {
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            
+            // More interpolation points for lower frequencies
+            const steps = Math.max(5, Math.ceil(20 * (1 - (p1.x - points[0].x) / (points[points.length - 1].x - points[0].x))));
+            
+            for (let t = 1; t < steps; t++) {
+                const ratio = t / steps;
+                const x = p1.x + (p2.x - p1.x) * ratio;
+                const y = p1.y + (p2.y - p1.y) * ratio;
+                result.push({ x, y });
+            }
+        }
+        
+        result.push(points[points.length - 1]);
+        return result;
+    }
+
+    // Update the drawing code in _drawFrame to use quadratic curves directly
     _drawFrame() {
         const ctx = this._spectrumCtx;
         const currentTime = performance.now();
@@ -451,19 +507,17 @@ class iSpectrumChart extends iControl {
             
             const startX = this._freqToX(this._minFreq);
             const bottomY = this._dbToY(this._minDb);
-            ctx.moveTo(startX, bottomY);
-
-            // Create points array for curve
+            
+            // Collect and prepare points
             const points = [];
             const dataLength = spectrum.decayData.length;
             
-            // Collect points for the curve
             for (let i = 0; i < dataLength; i++) {
                 const freq = spectrum.frequencies ? 
-                            spectrum.frequencies[i] : 
-                            this._minFreq + (i * (this._maxFreq - this._minFreq) / (dataLength - 1));
-                const elapsed = currentTime - spectrum.decayData[i].startTime;
+                    spectrum.frequencies[i] : 
+                    this._minFreq * Math.pow(this._maxFreq / this._minFreq, i / (dataLength - 1));
                 
+                const elapsed = currentTime - spectrum.decayData[i].startTime;
                 const initialValue = spectrum.decayData[i].value;
                 const decayFactor = Math.exp(-elapsed / this._decayTimeConstant);
                 let currentValue = this._minDb + (initialValue - this._minDb) * decayFactor;
@@ -476,71 +530,54 @@ class iSpectrumChart extends iControl {
                 });
             }
 
-            // Draw smooth curve through points
-            ctx.moveTo(points[0].x, points[0].y);
+            // Reduce redundant points before interpolation
+            const reducedPoints = this._reduceSpectrumData(points);
             
-            // Draw curved segments
-            for (let i = 0; i < points.length - 1; i++) {
-                const current = points[i];
-                const next = points[i + 1];
-                
-                // Calculate control points for smooth curve
-                const controlX = (current.x + next.x) / 2;
-                ctx.quadraticCurveTo(
-                    current.x,
-                    current.y,
-                    controlX,
-                    next.y
-                );
+            // Interpolate the reduced points
+            const interpolatedPoints = this._interpolatePoints(reducedPoints);
+            
+            // Draw the main curve
+            ctx.beginPath();
+            ctx.moveTo(interpolatedPoints[0].x, interpolatedPoints[0].y);
+            
+            for (let i = 1; i < interpolatedPoints.length; i++) {
+                ctx.lineTo(interpolatedPoints[i].x, interpolatedPoints[i].y);
             }
 
-            // Complete the path to bottom
-            ctx.lineTo(this._freqToX(this._maxFreq), bottomY);
-            ctx.lineTo(startX, bottomY);
+            // Only complete the fill path if showFill is true
+            if (spectrum.preferences.showFill) {
+                ctx.lineTo(this._freqToX(this._maxFreq), bottomY);
+                ctx.lineTo(startX, bottomY);
+                ctx.closePath();
+                ctx.fill();
+            }
             
-            // Fill and stroke
-            ctx.fill();
             ctx.stroke();
-    
-            // Draw peak hold with variable data length
-            if (spectrum.isPeakHoldEnabled) {
+
+            // Draw peak hold with improved interpolation
+            if (spectrum.isPeakHoldEnabled && spectrum.preferences.showPeak) {  // Add condition here
                 ctx.beginPath();
                 ctx.strokeStyle = spectrum.preferences.peakColor;
                 ctx.lineWidth = 2;
                 
-                // Collect peak hold points
-                const peakPoints = [];
-                for (let i = 0; i < spectrum.peakHoldData.length; i++) {
-                    const freq = spectrum.frequencies ? 
-                                spectrum.frequencies[i] : 
-                                this._minFreq + (i * (this._maxFreq - this._minFreq) / (spectrum.peakHoldData.length - 1));
-                    peakPoints.push({
-                        x: this._freqToX(freq),
-                        y: this._dbToY(spectrum.peakHoldData[i])
-                    });
-                }
+                const peakPoints = spectrum.peakHoldData.map((value, i) => ({
+                    x: this._freqToX(spectrum.frequencies ? 
+                        spectrum.frequencies[i] : 
+                        this._minFreq * Math.pow(this._maxFreq / this._minFreq, i / (spectrum.peakHoldData.length - 1))),
+                    y: this._dbToY(value)
+                }));
 
-                // Draw smooth curve through peak points
-                ctx.moveTo(peakPoints[0].x, peakPoints[0].y);
+                const interpolatedPeakPoints = this._interpolatePoints(peakPoints);
                 
-                // Draw curved segments for peak hold
-                for (let i = 0; i < peakPoints.length - 1; i++) {
-                    const current = peakPoints[i];
-                    const next = peakPoints[i + 1];
-                    
-                    const controlX = (current.x + next.x) / 2;
-                    ctx.quadraticCurveTo(
-                        current.x,
-                        current.y,
-                        controlX,
-                        next.y
-                    );
+                ctx.moveTo(interpolatedPeakPoints[0].x, interpolatedPeakPoints[0].y);
+                for (let i = 1; i < interpolatedPeakPoints.length; i++) {
+                    ctx.lineTo(interpolatedPeakPoints[i].x, interpolatedPeakPoints[i].y);
                 }
                 
                 ctx.stroke();
             }
         }
-        
+
         // Draw FPS counter
         ctx.font = `${this._preferences.text.normal.weight} ${this._preferences.text.normal.size}px ${this._preferences.text.normal.font}`;
         ctx.textAlign = 'right';
