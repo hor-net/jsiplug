@@ -503,24 +503,30 @@ class iSpectrumChart extends iControl {
 
     // Update _drawFrame method to handle variable data length
     // Add this helper method after _calculateDbStep and before _drawGrid
-    // Add this helper method before _interpolatePoints
     _reduceSpectrumData(points, tolerance = 0.1) {
         if (points.length < 2) return points;
         
         const reduced = [points[0]];
         let lastValue = points[0].y;
         let lastX = points[0].x;
+        let skipCount = 0;
         
-        for (let i = 1; i < points.length - 1; i++) {
-            const diff = Math.abs(points[i].y - lastValue);
-            // Make tolerance stricter for lower frequencies (left side)
-            const dynamicTolerance = tolerance * (1 + (points[i].x - points[0].x) / (points[points.length - 1].x - points[0].x));
-            const xDiff = Math.abs(points[i].x - lastX);
+        // Use a larger minimum step size for initial reduction
+        const minStep = Math.max(1, Math.floor(points.length / 200));
+        
+        for (let i = minStep; i < points.length - 1; i += minStep) {
+            const point = points[i];
+            const diff = Math.abs(point.y - lastValue);
+            const xDiff = point.x - lastX;
             
-            if (diff > dynamicTolerance || xDiff > 20) {  // Add minimum x-spacing check
-                reduced.push(points[i]);
-                lastValue = points[i].y;
-                lastX = points[i].x;
+            // Simplified dynamic tolerance
+            if (diff > tolerance || xDiff > 20 || skipCount > 10) {
+                reduced.push(point);
+                lastValue = point.y;
+                lastX = point.x;
+                skipCount = 0;
+            } else {
+                skipCount++;
             }
         }
         
@@ -531,160 +537,156 @@ class iSpectrumChart extends iControl {
     _interpolatePoints(points) {
         if (points.length < 2) return points;
         
-        const result = [];
-        result.push(points[0]);
+        // Pre-calculate total width for frequency scaling
+        const totalWidth = points[points.length - 1].x - points[0].x;
+        const baseSteps = 5;
+        const maxSteps = 12; // Reduced from 20 for better performance
+        
+        // Pre-allocate array with estimated size
+        const estimatedSize = points.length * maxSteps;
+        const result = new Array(estimatedSize);
+        let resultIndex = 0;
+        result[resultIndex++] = points[0];
         
         for (let i = 0; i < points.length - 1; i++) {
             const p1 = points[i];
             const p2 = points[i + 1];
             
-            // More interpolation points for lower frequencies
-            const steps = Math.max(5, Math.ceil(20 * (1 - (p1.x - points[0].x) / (points[points.length - 1].x - points[0].x))));
+            // Calculate steps based on x position (more points for lower frequencies)
+            const freqFactor = 1 - (p1.x - points[0].x) / totalWidth;
+            const xDistance = p2.x - p1.x;
+            const steps = Math.min(maxSteps, 
+                Math.max(baseSteps, 
+                    Math.ceil(baseSteps + (maxSteps - baseSteps) * freqFactor * (xDistance / 50))
+                )
+            );
             
+            // Pre-calculate step values
+            const stepX = (p2.x - p1.x) / steps;
+            const stepY = (p2.y - p1.y) / steps;
+            
+            // Linear interpolation with pre-calculated steps
             for (let t = 1; t < steps; t++) {
-                const ratio = t / steps;
-                const x = p1.x + (p2.x - p1.x) * ratio;
-                const y = p1.y + (p2.y - p1.y) * ratio;
-                result.push({ x, y });
+                result[resultIndex++] = {
+                    x: p1.x + stepX * t,
+                    y: p1.y + stepY * t
+                };
             }
         }
         
-        result.push(points[points.length - 1]);
-        return result;
+        result[resultIndex++] = points[points.length - 1];
+        return result.slice(0, resultIndex);
     }
 
     // Update the drawing code in _drawFrame to use quadratic curves directly
     _drawFrame() {
         const ctx = this._spectrumCtx;
         const currentTime = performance.now();
-        const currentFPS = this._calculateFPS();
         
-        // Clear canvas
-        ctx.clearRect(0, 0, this._spectrumCanvas.width, this._spectrumCanvas.height);
+        // Cache frequently used values
+        const width = this._spectrumCanvas.width;
+        const height = this._spectrumCanvas.height;
         
-        // Sort spectrums by z-index
-        const sortedSpectrums = Array.from(this._spectrumLayers.entries())
+        // Clear canvas - use clearRect only for the area we draw in
+        ctx.clearRect(this._leftPadding, this._topBottomPadding, 
+            width - this._leftPadding - this._rightPadding, 
+            height - 2 * this._topBottomPadding);
+        
+        // Sort spectrums by z-index - do this only when layers change
+        const sortedSpectrums = [...this._spectrumLayers.entries()]
             .sort((a, b) => a[1].zIndex - b[1].zIndex);
+        
+        // Pre-calculate common values
+        const startX = this._freqToX(this._minFreq);
+        const endX = this._freqToX(this._maxFreq);
         
         // Draw each spectrum
         for (const [id, spectrum] of sortedSpectrums) {
-            ctx.beginPath();
-            ctx.strokeStyle = spectrum.preferences.lineColor;
-            ctx.fillStyle = spectrum.preferences.fillColor;
-            ctx.lineWidth = spectrum.preferences.lineWidth || 2; // Use lineWidth from preferences
-            
-            const startX = this._freqToX(this._minFreq);
-            const endX = this._freqToX(this._maxFreq);
             const scale = this._scales.get(spectrum.scaleId || 'default');
             const bottomY = this._dbToY(scale.minDb, spectrum.scaleId);
-
-            // Collect and prepare points
-            const points = [];
-            const dataLength = spectrum.decayData.length;
+            const points = new Array(spectrum.decayData.length);
             
-            for (let i = 0; i < dataLength; i++) {
-                const freq = spectrum.frequencies ? 
-                    spectrum.frequencies[i] : 
-                    this._minFreq * Math.pow(this._maxFreq / this._minFreq, i / (dataLength - 1));
+            // Batch process all points first
+            for (let i = 0; i < spectrum.decayData.length; i++) {
+                const freq = spectrum.frequencies?.[i] ?? 
+                    this._minFreq * Math.pow(this._maxFreq / this._minFreq, i / (spectrum.decayData.length - 1));
                 
-                // Calculate current value with decay
                 const decayData = spectrum.decayData[i];
-                const elapsed = currentTime - decayData.startTime;
-                const scale = this._scales.get(spectrum.scaleId);
-                
-                if(spectrum.isDecayEnabled) {
-                    // Only apply decay if we have a valid start time
-                    if (decayData.startTime > 0) {
-                        const elapsedSeconds = elapsed / 1000;
-                        const timeConstantSeconds = this._decayTimeConstant / 1000;
-                        // Simulate exponential decay using a non-linear factor
-                        const decayFactor = elapsedSeconds / timeConstantSeconds;
-                        const decayAmount = 30 * decayFactor * (1 + decayFactor);  // Non-linear scaling
-                        decayData.value = Math.max(
-                            scale.minDb,
-                            decayData.value - decayAmount
-                        );
-                    }
+                if(spectrum.isDecayEnabled && decayData.startTime > 0) {
+                    const decayFactor = (currentTime - decayData.startTime) / (this._decayTimeConstant);
+                    decayData.value = Math.max(
+                        scale.minDb,
+                        decayData.value - (30 * decayFactor * (1 + decayFactor))
+                    );
                 }
                 
-                // Only apply decay if enabled
-                const currentValue = Math.min(
-                    scale.maxDb,
-                    Math.max(
-                        scale.minDb,
-                        decayData.value
-                    )
-                );
-                
-                // Use spectrum's scale for Y position
-                points.push({
+                points[i] = {
                     x: this._freqToX(freq),
-                    y: this._dbToY(currentValue, spectrum.scaleId)
-                });
+                    y: this._dbToY(
+                        Math.min(scale.maxDb, Math.max(scale.minDb, decayData.value)),
+                        spectrum.scaleId
+                    )
+                };
             }
 
-            // Reduce redundant points before interpolation
-            const reducedPoints = this._reduceSpectrumData(points);
+            // Process and draw main curve
+            const interpolatedPoints = this._interpolatePoints(
+                this._reduceSpectrumData(points)
+            );
             
-            // Interpolate the reduced points
-            const interpolatedPoints = this._interpolatePoints(reducedPoints);
-            
-            // Draw the main curve with contained fill
-            ctx.beginPath();
-            ctx.moveTo(startX, bottomY); // Start at bottom left
-            ctx.lineTo(interpolatedPoints[0].x, interpolatedPoints[0].y);
-            
-            for (let i = 1; i < interpolatedPoints.length; i++) {
-                ctx.lineTo(interpolatedPoints[i].x, interpolatedPoints[i].y);
-            }
-
-            // Only complete the fill path if showFill is true
+            // Draw fill if enabled
             if (spectrum.preferences.showFill) {
-                ctx.lineTo(endX, interpolatedPoints[interpolatedPoints.length - 1].y);
-                ctx.lineTo(endX, bottomY); // Go to bottom right
-                ctx.closePath();
+                ctx.beginPath();
+                ctx.fillStyle = spectrum.preferences.fillColor;
+                ctx.moveTo(startX, bottomY);
+                for (const point of interpolatedPoints) {
+                    ctx.lineTo(point.x, point.y);
+                }
+                ctx.lineTo(endX, bottomY);
                 ctx.fill();
             }
             
-            // Redraw the line on top for better visibility
+            // Draw line
             ctx.beginPath();
-            ctx.lineWidth = spectrum.preferences.lineWidth || 2; // Use lineWidth from preferences
             ctx.strokeStyle = spectrum.preferences.lineColor;
-            ctx.moveTo(interpolatedPoints[0].x, interpolatedPoints[0].y);
+            ctx.lineWidth = spectrum.preferences.lineWidth || 2;
+            const firstPoint = interpolatedPoints[0];
+            ctx.moveTo(firstPoint.x, firstPoint.y);
             for (let i = 1; i < interpolatedPoints.length; i++) {
                 ctx.lineTo(interpolatedPoints[i].x, interpolatedPoints[i].y);
             }
             ctx.stroke();
 
-            // Draw peak hold with improved interpolation
-            if (spectrum.isPeakHoldEnabled && spectrum.preferences.showPeak) {  // Add condition here
+            // Draw peak hold if enabled
+            if (spectrum.isPeakHoldEnabled && spectrum.preferences.showPeak) {
                 ctx.beginPath();
                 ctx.strokeStyle = spectrum.preferences.peakColor;
-                ctx.lineWidth = spectrum.preferences.peakWidth || spectrum.preferences.lineWidth || 2; // Use peakWidth or fallback to lineWidth
+                ctx.lineWidth = spectrum.preferences.peakWidth || spectrum.preferences.lineWidth || 2;
                 
-                const peakPoints = spectrum.peakHoldData.map((value, i) => ({
-                    x: this._freqToX(spectrum.frequencies ? 
-                        spectrum.frequencies[i] : 
-                        this._minFreq * Math.pow(this._maxFreq / this._minFreq, i / (spectrum.peakHoldData.length - 1))),
-                    y: this._dbToY(value)
-                }));
-
-                const interpolatedPeakPoints = this._interpolatePoints(peakPoints);
+                const peakPoints = this._interpolatePoints(
+                    spectrum.peakHoldData.map((value, i) => ({
+                        x: this._freqToX(spectrum.frequencies?.[i] ?? 
+                            this._minFreq * Math.pow(this._maxFreq / this._minFreq, i / (spectrum.peakHoldData.length - 1))),
+                        y: this._dbToY(value)
+                    }))
+                );
                 
-                ctx.moveTo(interpolatedPeakPoints[0].x, interpolatedPeakPoints[0].y);
-                for (let i = 1; i < interpolatedPeakPoints.length; i++) {
-                    ctx.lineTo(interpolatedPeakPoints[i].x, interpolatedPeakPoints[i].y);
+                ctx.moveTo(peakPoints[0].x, peakPoints[0].y);
+                for (const point of peakPoints) {
+                    ctx.lineTo(point.x, point.y);
                 }
-                
                 ctx.stroke();
             }
         }
 
-        // Draw FPS counter
-        ctx.font = `${this._preferences.text.normal.weight} ${this._preferences.text.normal.size}px ${this._preferences.text.normal.font}`;
-        ctx.textAlign = 'right';
-        ctx.fillStyle = this._preferences.text.color;
-        ctx.fillText(`${currentFPS} FPS`, this._spectrumCanvas.width - 10, 15);
+        // Update FPS counter less frequently
+        if (currentTime - this._lastTime >= 500) {
+            ctx.font = `${this._preferences.text.normal.weight} ${this._preferences.text.normal.size}px ${this._preferences.text.normal.font}`;
+            ctx.textAlign = 'right';
+            ctx.fillStyle = this._preferences.text.color;
+            ctx.fillText(`${this._calculateFPS()} FPS`, width - 10, 15);
+            this._lastTime = currentTime;
+        }
     }
     
     _drawInitialSpectrum() {
