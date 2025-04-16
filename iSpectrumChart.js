@@ -30,7 +30,7 @@ class iSpectrumChart extends iControl {
         this._peakHoldData = new Array(200).fill(-120);
         this._isPeakHoldEnabled = true;
         
-        // Appearance preferences
+        // Appearance preferences - Move this BEFORE scales initialization
         this._preferences = {
             grid: {
                 normalLine: {
@@ -39,6 +39,9 @@ class iSpectrumChart extends iControl {
                 },
                 emphasizedLine: {
                     width: 2,
+                    color: '#999'
+                },
+                frequencyMarker: {  // Add frequency marker preferences
                     color: '#999'
                 }
             },
@@ -59,10 +62,32 @@ class iSpectrumChart extends iControl {
             spectrum: {
                 lineColor: '#2196F3',
                 fillColor: 'rgba(33, 150, 243, 0.3)',
-                peakColor: '#FF5722'  // Default peak hold color (orange)
+                peakColor: '#FF5722'
             }
         };
 
+        // Override defaults with user preferences if provided
+        if (options.preferences) {
+            this._preferences = {...this._preferences, ...options.preferences};
+        }
+        
+        // Add scales management - Move this AFTER preferences initialization
+        this._scales = new Map();
+        this._scales.set('default', {
+            minDb: this._minDb,
+            maxDb: this._maxDb,
+            position: 'left',
+            color: this._preferences.text.color
+        });
+
+        // Default values (modify to use default scale)
+        this._minFreq = 20;
+        this._maxFreq = 20000;
+        
+        // Add peak hold data
+        this._peakHoldData = new Array(200).fill(-120);
+        this._isPeakHoldEnabled = true;
+        
         // Override defaults with user preferences if provided
         if (options.preferences) {
             this._preferences = {...this._preferences, ...options.preferences};
@@ -144,6 +169,11 @@ class iSpectrumChart extends iControl {
         this._leftPadding = 60;
         this._rightPadding = 40;
         
+        // Add extra padding if there's a right-side scale
+        if ([...this._scales.values()].some(scale => scale.position === 'right')) {
+            this._rightPadding = 60;
+        }
+        
         // Update both canvases
         this._gridCanvas.width = rect.width;
         this._gridCanvas.height = rect.height;
@@ -164,10 +194,25 @@ class iSpectrumChart extends iControl {
                (this._gridCanvas.width - this._leftPadding - this._rightPadding);
     }
 
-    _dbToY(db) {
+    addScale(id, options = {}) {
+        const defaultScale = {
+            minDb: -120,
+            maxDb: 0,
+            position: 'right',
+            color: this._preferences.text.color,
+            scaleId: id
+        };
+        
+        this._scales.set(id, { ...defaultScale, ...options });
+        this._updateCanvasSize(); // Recalculate padding for new scale
+    } 
+
+    // Add helper method to get dB value based on scale
+    _dbToY(db, scaleId = 'default') {
+        const scale = this._scales.get(scaleId);
         const availableHeight = this._gridCanvas.height - (this._topBottomPadding * 2);
         return this._topBottomPadding + 
-               (1 - ((db - this._minDb) / (this._maxDb - this._minDb))) * availableHeight;
+               (1 - ((db - scale.minDb) / (scale.maxDb - scale.minDb))) * availableHeight;
     }
 
     _calculateDbStep() {
@@ -229,14 +274,15 @@ class iSpectrumChart extends iControl {
                 let label = freq.toString();
                 if (freq === 1000) label = '1K';
                 if (freq === 10000) label = '10K';
+                ctx.fillStyle = this._preferences.text.color;
                 ctx.fillText(label, x, this._gridCanvas.height - 5);  // Fixed reference
             }
         };
 
         // Draw min/max frequency lines with emphasis
         ctx.beginPath();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = '#999';
+        ctx.lineWidth = this._preferences.grid.emphasizedLine.width;
+        ctx.strokeStyle = this._preferences.grid.frequencyMarker.color;
         
         // Min frequency (20 Hz)
         ctx.moveTo(minX, this._topBottomPadding);
@@ -246,7 +292,7 @@ class iSpectrumChart extends iControl {
         // Max frequency (20K)
         ctx.beginPath();
         ctx.moveTo(maxX, this._topBottomPadding);
-        ctx.lineTo(maxX, this._gridCanvas.height - this._topBottomPadding);  // Fixed reference
+        ctx.lineTo(maxX, this._gridCanvas.height - this._topBottomPadding);
         ctx.stroke();
         
         // Draw emphasized frequency labels
@@ -266,47 +312,54 @@ class iSpectrumChart extends iControl {
         freqBands100to1000.forEach(freq => drawFreqLine(freq, labeledFreqs.includes(freq)));
         freqBands1000to10000.forEach(freq => drawFreqLine(freq, labeledFreqs.includes(freq)));
 
-        // Remove this entire block as it's using the undefined freqBands variable
-        /* for (let decade = 1; decade <= 3; decade++) {
-            const multiplier = Math.pow(10, decade);
-            freqBands.forEach(freq => {
-                const freqValue = freq * multiplier;
-                // Skip if frequency is greater than or equal to max frequency
-                if (freqValue >= this._maxFreq) return;
-                
-                const x = this._freqToX(freqValue);
-                const isLabeled = labeledFreqs.includes(freqValue);
+        // Draw dB lines and labels for each scale
+        for (const [scaleId, scale] of this._scales) {
+            const dbStep = this._calculateDbStep(scale);
+            const padding = scale.position === 'left' ? this._leftPadding : this._gridCanvas.width - this._rightPadding;
+            
+            ctx.strokeStyle = this._preferences.grid.normalLine.color;
+            ctx.fillStyle = scale.color;
+            
+            // Draw regular grid lines
+            for (let db = scale.minDb; db <= scale.maxDb; db += dbStep) {
+                if (db === scale.minDb || db === scale.maxDb) continue;
+                const y = this._dbToY(db, scaleId);
                 
                 ctx.beginPath();
-                ctx.lineWidth = isLabeled ? 2 : 0.5;
-                ctx.moveTo(x, this._topBottomPadding);
-                ctx.lineTo(x, this._canvas.height - this._topBottomPadding);
+                ctx.lineWidth = 0.5;
+                ctx.moveTo(this._leftPadding, y);
+                ctx.lineTo(this._gridCanvas.width - this._rightPadding, y);
                 ctx.stroke();
                 
-                if (isLabeled) {
-                    ctx.textAlign = 'center';
-                    ctx.fillText(`${freqValue}`, x, this._canvas.height - 5);
-                }
-            });
-        } */
-
-        // Draw dB lines and labels
-        const dbStep = this._calculateDbStep();
-        
-        // Draw regular grid lines
-        for (let db = this._minDb; db <= this._maxDb; db += dbStep) {
-            if (db === this._minDb || db === this._maxDb) continue;
-            const y = this._dbToY(db);
+                ctx.textAlign = scale.position === 'left' ? 'right' : 'left';
+                ctx.textBaseline = 'middle';
+                const textPadding = scale.position === 'left' ? -5 : 5;
+                ctx.fillText(`${db}`, padding + textPadding, y);
+            }
             
+            // Draw emphasized min/max lines
+            const minY = this._dbToY(scale.minDb, scaleId);
+            const maxY = this._dbToY(scale.maxDb, scaleId);
+            
+            ctx.lineWidth = this._preferences.grid.emphasizedLine.width;
+            ctx.strokeStyle = this._preferences.grid.emphasizedLine.color;
+            
+            // Min/Max lines
             ctx.beginPath();
-            ctx.lineWidth = 0.5;
-            ctx.moveTo(leftPadding, y);
-            ctx.lineTo(this._freqToX(this._maxFreq), y);
+            ctx.moveTo(this._leftPadding, minY);
+            ctx.lineTo(this._gridCanvas.width - this._rightPadding, minY);
             ctx.stroke();
             
-            ctx.textAlign = 'right';
-            ctx.textBaseline = 'middle';  // Add this for regular labels
-            ctx.fillText(`${db}`, leftPadding - 5, y);
+            ctx.beginPath();
+            ctx.moveTo(this._leftPadding, maxY);
+            ctx.lineTo(this._gridCanvas.width - this._rightPadding, maxY);
+            ctx.stroke();
+            
+            // Min/Max labels
+            ctx.font = `${this._preferences.text.emphasized.weight} ${this._preferences.text.emphasized.size}px "${this._preferences.text.emphasized.font}"`;
+            //ctx.fillStyle = this._preferences.grid.emphasizedLine.color;
+            ctx.fillText(`${scale.minDb}`, padding + (scale.position === 'left' ? -5 : 5), minY);
+            ctx.fillText(`${scale.maxDb}`, padding + (scale.position === 'left' ? -5 : 5), maxY);
         }
         
         // Draw minDb and maxDb lines and labels with emphasis
@@ -315,8 +368,8 @@ class iSpectrumChart extends iControl {
         
         // Draw emphasized lines
         ctx.beginPath();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = '#999';
+        ctx.lineWidth = this._preferences.grid.emphasizedLine.width;
+        ctx.strokeStyle = this._preferences.grid.frequencyMarker.color;
         
         // Min line
         ctx.moveTo(leftPadding, minY);
@@ -333,6 +386,7 @@ class iSpectrumChart extends iControl {
         ctx.textAlign = 'right';
         ctx.textBaseline = 'middle';  // Ensure consistent baseline
         ctx.font = `${emphasizedFont.weight} ${emphasizedFont.size}px "${emphasizedFont.font}"`;
+        ctx.fillStyle = this._preferences.grid.emphasizedLine.color;
         ctx.fillText(`${this._minDb}`, leftPadding - 5, minY);  // Use same padding as regular labels
         ctx.fillText(`${this._maxDb}`, leftPadding - 5, maxY);  // Use same padding as regular labels
         
@@ -379,18 +433,27 @@ class iSpectrumChart extends iControl {
             zIndex: this._spectrumLayers.size,
             decayData: new Array(8192).fill({ value: -120, startTime: 0 }),
             peakHoldData: new Array(8192).fill(-120),
-            frequencies: null,  // Add frequencies array
+            frequencies: null,
             isPeakHoldEnabled: true,
+            isDecayEnabled: true,  // Add decay control option
+            scaleId: 'default',  // Always set default scale
             preferences: {
                 lineColor: '#2196F3',
                 fillColor: 'rgba(33, 150, 243, 0.3)',
                 peakColor: '#FF5722',
                 showFill: true,
-                showPeak: true  // Add this new option
+                showPeak: true
             }
         };
     
+        // First spread the defaults, then spread the options to override if specified
         const spectrum = { ...defaultSpectrum, ...options };
+        
+        // Ensure scaleId exists in scales Map, fallback to default if not
+        if (!this._scales.has(spectrum.scaleId)) {
+            spectrum.scaleId = 'default';
+        }
+        
         this._spectrumLayers.set(id, spectrum);
     }
 
@@ -424,11 +487,16 @@ class iSpectrumChart extends iControl {
         
         // Update values, keeping track of decay
         for (let i = 0; i < data.length; i++) {
-            if (data[i] > spectrum.decayData[i].value) {
+            if (data[i] > spectrum.decayData[i].value && spectrum.isDecayEnabled ) {
                 spectrum.decayData[i] = {
                     value: data[i],
                     startTime: currentTime
                 };
+            } else {
+              spectrum.decayData[i] = {
+                  value: data[i],
+                  startTime: currentTime
+              };
             }
         }
     }
@@ -503,11 +571,13 @@ class iSpectrumChart extends iControl {
             ctx.beginPath();
             ctx.strokeStyle = spectrum.preferences.lineColor;
             ctx.fillStyle = spectrum.preferences.fillColor;
-            ctx.lineWidth = 2;
+            ctx.lineWidth = spectrum.preferences.lineWidth || 2; // Use lineWidth from preferences
             
             const startX = this._freqToX(this._minFreq);
-            const bottomY = this._dbToY(this._minDb);
-            
+            const endX = this._freqToX(this._maxFreq);
+            const scale = this._scales.get(spectrum.scaleId || 'default');
+            const bottomY = this._dbToY(scale.minDb, spectrum.scaleId);
+
             // Collect and prepare points
             const points = [];
             const dataLength = spectrum.decayData.length;
@@ -517,16 +587,39 @@ class iSpectrumChart extends iControl {
                     spectrum.frequencies[i] : 
                     this._minFreq * Math.pow(this._maxFreq / this._minFreq, i / (dataLength - 1));
                 
-                const elapsed = currentTime - spectrum.decayData[i].startTime;
-                const initialValue = spectrum.decayData[i].value;
-                const decayFactor = Math.exp(-elapsed / this._decayTimeConstant);
-                let currentValue = this._minDb + (initialValue - this._minDb) * decayFactor;
-                currentValue = Math.max(currentValue, this._minDb);
-                spectrum.decayData[i].value = currentValue;
+                // Calculate current value with decay
+                const decayData = spectrum.decayData[i];
+                const elapsed = currentTime - decayData.startTime;
+                const scale = this._scales.get(spectrum.scaleId);
                 
+                if(spectrum.isDecayEnabled) {
+                    // Only apply decay if we have a valid start time
+                    if (decayData.startTime > 0) {
+                        const elapsedSeconds = elapsed / 1000;
+                        const timeConstantSeconds = this._decayTimeConstant / 1000;
+                        // Simulate exponential decay using a non-linear factor
+                        const decayFactor = elapsedSeconds / timeConstantSeconds;
+                        const decayAmount = 30 * decayFactor * (1 + decayFactor);  // Non-linear scaling
+                        decayData.value = Math.max(
+                            scale.minDb,
+                            decayData.value - decayAmount
+                        );
+                    }
+                }
+                
+                // Only apply decay if enabled
+                const currentValue = Math.min(
+                    scale.maxDb,
+                    Math.max(
+                        scale.minDb,
+                        decayData.value
+                    )
+                );
+                
+                // Use spectrum's scale for Y position
                 points.push({
                     x: this._freqToX(freq),
-                    y: this._dbToY(currentValue)
+                    y: this._dbToY(currentValue, spectrum.scaleId)
                 });
             }
 
@@ -536,9 +629,10 @@ class iSpectrumChart extends iControl {
             // Interpolate the reduced points
             const interpolatedPoints = this._interpolatePoints(reducedPoints);
             
-            // Draw the main curve
+            // Draw the main curve with contained fill
             ctx.beginPath();
-            ctx.moveTo(interpolatedPoints[0].x, interpolatedPoints[0].y);
+            ctx.moveTo(startX, bottomY); // Start at bottom left
+            ctx.lineTo(interpolatedPoints[0].x, interpolatedPoints[0].y);
             
             for (let i = 1; i < interpolatedPoints.length; i++) {
                 ctx.lineTo(interpolatedPoints[i].x, interpolatedPoints[i].y);
@@ -546,19 +640,27 @@ class iSpectrumChart extends iControl {
 
             // Only complete the fill path if showFill is true
             if (spectrum.preferences.showFill) {
-                ctx.lineTo(this._freqToX(this._maxFreq), bottomY);
-                ctx.lineTo(startX, bottomY);
+                ctx.lineTo(endX, interpolatedPoints[interpolatedPoints.length - 1].y);
+                ctx.lineTo(endX, bottomY); // Go to bottom right
                 ctx.closePath();
                 ctx.fill();
             }
             
+            // Redraw the line on top for better visibility
+            ctx.beginPath();
+            ctx.lineWidth = spectrum.preferences.lineWidth || 2; // Use lineWidth from preferences
+            ctx.strokeStyle = spectrum.preferences.lineColor;
+            ctx.moveTo(interpolatedPoints[0].x, interpolatedPoints[0].y);
+            for (let i = 1; i < interpolatedPoints.length; i++) {
+                ctx.lineTo(interpolatedPoints[i].x, interpolatedPoints[i].y);
+            }
             ctx.stroke();
 
             // Draw peak hold with improved interpolation
             if (spectrum.isPeakHoldEnabled && spectrum.preferences.showPeak) {  // Add condition here
                 ctx.beginPath();
                 ctx.strokeStyle = spectrum.preferences.peakColor;
-                ctx.lineWidth = 2;
+                ctx.lineWidth = spectrum.preferences.peakWidth || spectrum.preferences.lineWidth || 2; // Use peakWidth or fallback to lineWidth
                 
                 const peakPoints = spectrum.peakHoldData.map((value, i) => ({
                     x: this._freqToX(spectrum.frequencies ? 
