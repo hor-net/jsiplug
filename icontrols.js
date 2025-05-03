@@ -15,8 +15,14 @@ class iControl {
 
   constructor(options) {
     this._domElement = document.getElementById(options.id);
-    this._width = 0;
-    this._height = 0;
+    this._height = window.getComputedStyle(this._domElement).getPropertyValue("height");
+    this._height = this._height.substring(0, this._height.length - 2);
+    this._width = window.getComputedStyle(this._domElement).getPropertyValue("width");
+    this._width = this._width.substring(0, this._width.length - 2);
+    this._left = window.getComputedStyle(this._domElement).getPropertyValue("left");
+    this._top = window.getComputedStyle(this._domElement).getPropertyValue("top");
+    this._left = this._left.substring(0, this._left.length - 2);
+    this._top = this._top.substring(0, this._top.length - 2);
     this._captured = false;
     this._informHostOfParamChange = true;
     this._paramIdx = -1;
@@ -201,6 +207,10 @@ class iDraggable extends iControl {
         this._height = this._height.substring(0, this._height.length - 2);
         this._width = window.getComputedStyle(this._domElement).getPropertyValue("width");
         this._width = this._width.substring(0, this._width.length - 2);
+        this._left = window.getComputedStyle(this._domElement).getPropertyValue("left");
+        this._left = this._left.substring(0, this._left.length - 2);
+        this._top = window.getComputedStyle(this._domElement).getPropertyValue("top");
+        this._top = this._top.substring(0, this._top.length - 2);
       });
 
     // Start observing the target node for configured mutations
