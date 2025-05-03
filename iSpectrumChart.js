@@ -258,6 +258,12 @@ class iSpectrumChart extends iControl {
         this._updateCanvasSize(); // Recalculate padding for new scale
     } 
 
+    setMindB(mindB, scaleId = 'default') {
+        const scale = this._scales.get(scaleId) || this._scales.get('default');
+        scale.minDb = mindB;
+        this._updateCanvasSize(); // Recalculate padding for new scale   
+    }
+
     // Add helper method to get dB value based on scale
     _dbToY(db, scaleId = 'default') {
         const scale = this._scales.get(scaleId) || this._scales.get('default');
@@ -1108,7 +1114,9 @@ class iSpectrumChart extends iControl {
         if (preferences.decayTime) {
             this._decayTimeConstant = preferences.decayTime;
         }
-        this._scales.get('default').color = preferences.text.color;
+        if (preferences.text) {
+            this._scales.get('default').color = preferences.text.color;    
+        }
         // Handle spectrum-specific preferences
         if (preferences.spectrumPreferences) {
             for (const [id, prefs] of Object.entries(preferences.spectrumPreferences)) {
@@ -1126,7 +1134,7 @@ class iSpectrumChart extends iControl {
                 }
             }
         }
-        
+
         // Redraw both grid and spectrums when preferences change
         this._drawGrid();
         this._drawFrame();
