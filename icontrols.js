@@ -237,6 +237,23 @@ class iDraggable extends iControl {
         this._domElement.style.cursor = "initial";
     });
 
+    // Add mouse wheel event handler
+    this.handleWheel = (event) => {
+      event.preventDefault();
+      
+      // Determine direction and calculate delta
+      let delta = 0;
+      if (this._horizontal == true) {
+        delta = (event.deltaY / 100) * 0.05 / this._gearing;
+      } else {
+        delta = -(event.deltaY / 100) * 0.05 / this._gearing;
+      }
+      
+      this.setValue(this._value + delta);
+    };
+
+    this._domElement.addEventListener("wheel", this.handleWheel);
+
     this.touchMouseStart = (event) => {
       var clientX = -1;
       var clientY = -1;
