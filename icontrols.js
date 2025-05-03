@@ -56,6 +56,7 @@ class iControl {
     }
 
     this.dblClickHandler = event => {
+      event.stopPropagation();
       let value = this.toNormalized(this._defaultVal);
       this.setValue(value);
     }
