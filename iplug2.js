@@ -187,10 +187,16 @@ function GetControlByMessageId(id) {
 }
 
 function GetControlById(id) {
+    let retcontrols = [];
     for(var i =0; i < controls.length; i++) {
         if(controls[i].getDomElement().id == id) {
-            return controls[i];
+          retcontrols.push(controls[i]);
         }
+    }
+    if(retcontrols.length == 1) {
+        return retcontrols[0];
+    } else if(retcontrols.length > 1) {
+        return retcontrols;
     }
 }
 
