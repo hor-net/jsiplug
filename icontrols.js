@@ -512,6 +512,12 @@ class iSwitch extends iControl {
       } else {
         this._domElement.checked = false;
       }
+    } else {
+      if (this._value == 1) {
+        this._domElement.classList.add("on");
+      } else {
+        this._domElement.classList.remove("on");
+      }
     }
   }
 
