@@ -50,7 +50,7 @@ function SCMFD(ctrlTag, msgTag, msgSize, msg) {
 
 function SAMFD(msgTag, dataSize, msg) {
   let data = JSON.parse(window.atob(msg));
-  console.log(data);
+  //console.log(data);
   if (data["id"] == "params") {
     SetupControls();
     console.log(data["params"]);
