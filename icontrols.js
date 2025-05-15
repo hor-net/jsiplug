@@ -62,6 +62,29 @@ class iControl {
     }
 
     this._domElement.addEventListener("dblclick", this.dblClickHandler);
+    this._disabled = false;
+
+    const ro = new ResizeObserver(([entry]) => {
+      // offsetParent è null quando l'elemento (o un suo antenato) è display:none
+      const visible = entry.target.offsetParent !== null;
+      console.log(visible ? '✨ visibile!' : '🙈 nascosto');
+      if (visible) this.setValue(this._value);
+    });
+    
+    ro.observe(this._domElement);
+  }
+
+  setDisabled(disabled) {
+    this._disabled = disabled;
+    if (this._disabled) {
+      this._domElement.classList.add("disabled");
+    } else {
+      this._domElement.classList.remove("disabled");
+    }
+  }
+
+  isDisabled() {
+    return this._disabled;
   }
 
   fromNormalized(value) {
