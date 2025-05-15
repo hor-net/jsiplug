@@ -17,12 +17,16 @@ class iControl {
     this._domElement = document.getElementById(options.id);
     this._height = window.getComputedStyle(this._domElement).getPropertyValue("height");
     this._height = this._height.substring(0, this._height.length - 2);
+    this._height = parseFloat(this._height);
     this._width = window.getComputedStyle(this._domElement).getPropertyValue("width");
     this._width = this._width.substring(0, this._width.length - 2);
+    this._width = parseFloat(this._width);
     this._left = window.getComputedStyle(this._domElement).getPropertyValue("left");
-    this._top = window.getComputedStyle(this._domElement).getPropertyValue("top");
     this._left = this._left.substring(0, this._left.length - 2);
+    this._left = parseFloat(this._left);
+    this._top = window.getComputedStyle(this._domElement).getPropertyValue("top");
     this._top = this._top.substring(0, this._top.length - 2);
+    this._top = parseFloat(this._top);
     this._captured = false;
     this._informHostOfParamChange = true;
     this._paramIdx = -1;
