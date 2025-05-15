@@ -819,15 +819,46 @@ class iSpectrumChart extends iControl {
         gl.drawArrays(gl.LINES, 0, 2);
     }
 
-    _prepareSpectrumPoints(spectrum, currentTime, scale) {
-        const points = new Array(spectrum.decayData.length);
-        
-        // Batch process all points
-        for (let i = 0; i < spectrum.decayData.length; i++) {
-            const freq = spectrum.frequencies?.[i] ?? 
-                this._minFreq * Math.pow(this._maxFreq / this._minFreq, i / (spectrum.decayData.length - 1));
-            
-            if(spectrum.isDecayEnabled && spectrum.decayData[i].startTime > 0) {
+     _prepareSpectrumPoints(spectrum, currentTime, scale) {
+        const N = spectrum.decayData.length;
+        let freqs = spectrum.frequencies;
+
+        // Cache computed frequency array if not provided and if not already cached
+        if (!freqs) {
+            if (!spectrum._cachedFreqs || spectrum._cachedFreqs.length !== N ||
+                spectrum._cachedFreqsMin !== this._minFreq || spectrum._cachedFreqsMax !== this._maxFreq) {
+                // Precompute log step
+                const logMin = Math.log10(this._minFreq);
+                const logMax = Math.log10(this._maxFreq);
+                const step = (logMax - logMin) / (N - 1);
+                spectrum._cachedFreqs = new Float32Array(N);
+                for (let i = 0; i < N; i++) {
+                    spectrum._cachedFreqs[i] = Math.pow(10, logMin + step * i);
+                }
+                spectrum._cachedFreqsMin = this._minFreq;
+                spectrum._cachedFreqsMax = this._maxFreq;
+            }
+            freqs = spectrum._cachedFreqs;
+        }
+
+        const points = new Array(N);
+
+        // If decay is not enabled, skip decay logic
+        if (!spectrum.isDecayEnabled) {
+            for (let i = 0; i < N; i++) {
+                const dbValue = spectrum.decayData[i].value;
+                const clampedValue = Math.min(scale.maxDb, Math.max(scale.minDb, dbValue));
+                points[i] = {
+                    x: this._freqToX(freqs[i]),
+                    y: this._dbToY(clampedValue, spectrum.scaleId)
+                };
+            }
+            return points;
+        }
+
+        // Batch process all points with decay
+        for (let i = 0; i < N; i++) {
+            if (spectrum.decayData[i].startTime > 0) {
                 const elapsed = currentTime - spectrum.decayData[i].startTime;
                 const startValue = spectrum.decayData[i].startValue ?? spectrum.decayData[i].value;
                 if (elapsed < this._decayTimeConstant) {
@@ -836,20 +867,15 @@ class iSpectrumChart extends iControl {
                     spectrum.decayData[i].value = scale.minDb;
                 }
             }
-            
-            // The tilt is already applied in updateSpectrum, so we don't need to apply it here
-            let dbValue = spectrum.decayData[i].value;
-            
-            // Clamp the value to ensure it stays within minDb and maxDb range
+            const dbValue = spectrum.decayData[i].value;
             const clampedValue = Math.min(scale.maxDb, Math.max(scale.minDb, dbValue));
-            
             points[i] = {
-                x: this._freqToX(freq),
+                x: this._freqToX(freqs[i]),
                 y: this._dbToY(clampedValue, spectrum.scaleId)
             };
         }
 
-        return points; //this._interpolatePoints(points);
+        return points;
     }
 
     _preparePeakPoints(spectrum, scale) {
