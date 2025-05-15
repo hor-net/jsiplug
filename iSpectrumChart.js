@@ -1109,13 +1109,16 @@ class iSpectrumChart extends iControl {
     }
         
     updatePreferences(preferences) {
-        this._preferences = {...this._preferences, ...preferences};
+        this._preferences = this._deepMerge(this._preferences, preferences);
         this._domElement.style.backgroundColor = this._preferences.background;
         if (preferences.decayTime) {
             this._decayTimeConstant = preferences.decayTime;
         }
-        if (preferences.text) {
-            this._scales.get('default').color = preferences.text.color;    
+        if (preferences.text && preferences.text.color) {
+            // Update color for all scales
+            for (const [scaleId, scale] of this._scales) {
+                scale.color = this._preferences.text.color;
+            }
         }
         // Handle spectrum-specific preferences
         if (preferences.spectrumPreferences) {
