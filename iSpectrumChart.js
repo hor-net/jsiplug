@@ -19,6 +19,12 @@ class iSpectrumChart extends iControl {
         this._lastTime = performance.now();
         this._fps = 0;
         this._isAnimating = false;
+
+        // Initialize caches for coordinate conversion methods
+        this._freqToXCache = new Map();
+        this._xToFreqCache = new Map();
+        this._dbToYCache = new Map(); // Add new cache for _dbToY
+        this._binToFreqCache = new Map(); // Add new cache for _binToFreq
         
         // Default values
         this._minDb = Number(options.minDb) || -120;
@@ -110,6 +116,40 @@ class iSpectrumChart extends iControl {
     
         // Add tooltip
         this._setupTooltip();
+    }
+
+    _downsampleData(data, frequencies, targetSize) {
+        const N = data.length;
+        if (N <= targetSize) {
+            // No downsampling needed
+            return { data: data, frequencies: frequencies };
+        }
+
+        const downsampledData = new Float32Array(targetSize);
+        const downsampledFrequencies = new Float32Array(targetSize); // Always create frequencies array
+
+        for (let i = 0; i < targetSize; i++) {
+            // Calculate the range of original indices that map to this target index
+            const originalStartIndex = Math.floor((i / targetSize) * N);
+            const originalEndIndex = Math.min(N - 1, Math.floor(((i + 1) / targetSize) * N) - 1);
+
+            // Find the maximum dB value in this range (peak detection)
+            let maxDb = -Infinity;
+            for (let j = originalStartIndex; j <= originalEndIndex; j++) {
+                maxDb = Math.max(maxDb, data[j]);
+            }
+            downsampledData[i] = maxDb;
+
+            // Calculate frequency for the downsampled point
+            // Use the frequency at the start index of the range, or calculate if frequencies array is null
+            if (frequencies) {
+                 downsampledFrequencies[i] = frequencies[originalStartIndex];
+            } else {
+                 downsampledFrequencies[i] = this._binToFreq(originalStartIndex, N);
+            }
+        }
+
+        return { data: downsampledData, frequencies: downsampledFrequencies };
     }
 
     // Add this new method to set up the listener
@@ -219,29 +259,54 @@ class iSpectrumChart extends iControl {
         // now scale the 2D context so all your draw calls (which use CSS coords) map 1:1
         this._gridCtx.resetTransform();  
         this._gridCtx.scale(this._dpr, this._dpr);
+
+        // Clear caches as parameters for conversion have changed
+        this._freqToXCache.clear();
+        this._xToFreqCache.clear();
+        this._dbToYCache.clear(); // Clear the new cache
+        this._binToFreqCache.clear(); // Clear the _binToFreq cache
             
         this._drawGrid();
     }
 
     _freqToX(freq) {
+        if (this._freqToXCache.has(freq)) {
+            return this._freqToXCache.get(freq);
+        }
+
         // unchanged — returns a CSS-pixel X (0…rect.width)
         const logMin  = Math.log10(this._minFreq),
               logMax  = Math.log10(this._maxFreq),
               logFreq = Math.log10(freq);
         const cssWidth = this._gridCanvas.width / this._dpr;
-        return this._leftPadding + 
+        const result = this._leftPadding + 
                ((logFreq - logMin)/(logMax - logMin)) * 
                (cssWidth - this._leftPadding - this._rightPadding);
+        
+        this._freqToXCache.set(freq, result);
+        return result;
       }
 
     _xToFreq(x) {
-        x= x*this._dpr;
+        // Note: The original x is a CSS pixel value.
+        // We'll use this as the cache key.
+        if (this._xToFreqCache.has(x)) {
+            return this._xToFreqCache.get(x);
+        }
+
+        const xDprAdjusted = x * this._dpr; // Adjust for DPR for calculation as in original
         const logMin = Math.log10(this._minFreq);
         const logMax = Math.log10(this._maxFreq);
-        const normalizedX = (x - this._leftPadding) / 
-                          (this._gridCanvas.width - this._leftPadding - this._rightPadding);
+        // The original calculation used this._gridCanvas.width which is already DPR adjusted.
+        // For consistency in cache keying (using CSS pixel x), we use this._gridCanvas.width directly.
+        // The normalizedX calculation should use DPR-adjusted values for internal consistency with how _gridCanvas.width is defined.
+        const normalizedX = (xDprAdjusted - (this._leftPadding * this._dpr)) / 
+                          (this._gridCanvas.width - (this._leftPadding * this._dpr) - (this._rightPadding * this._dpr));
         const logFreq = normalizedX * (logMax - logMin) + logMin;
-        return Math.pow(10, logFreq);
+        const result = Math.pow(10, logFreq);
+
+        this._xToFreqCache.set(x, result);
+        return result;
     }
     
 
@@ -266,11 +331,24 @@ class iSpectrumChart extends iControl {
 
     // Add helper method to get dB value based on scale
     _dbToY(db, scaleId = 'default') {
+        // Round the dB value for better cache hits, especially with decay
+        // Rounding to 1 decimal place is a starting point, adjust precision if needed.
+        const roundedDb = Math.round(db * 10) / 10;
+        const cacheKey = `${scaleId}_${roundedDb}`; // Use rounded value in cache key
+
+        if (this._dbToYCache.has(cacheKey)) {
+            return this._dbToYCache.get(cacheKey);
+        }
+
         const scale = this._scales.get(scaleId) || this._scales.get('default');
         const cssHeight      = this._gridCanvas.height / this._dpr;
         const availableH     = cssHeight - (this._topBottomPadding * 2);
-        return this._topBottomPadding +
+        // Use the original 'db' value for the calculation to maintain accuracy
+        const result = this._topBottomPadding +
                (1 - ((db - scale.minDb)/(scale.maxDb - scale.minDb))) * availableH;
+        
+        this._dbToYCache.set(cacheKey, result);
+        return result;
       }
       
     // Add a method to set the tilt value (dB/octave)
@@ -303,12 +381,20 @@ class iSpectrumChart extends iControl {
     
     // Helper method to convert bin index to frequency
     _binToFreq(binIndex, totalBins) {
+        const cacheKey = `${binIndex}_${totalBins}`;
+        if (this._binToFreqCache.has(cacheKey)) {
+            return this._binToFreqCache.get(cacheKey);
+        }
+
         // Map bin index to frequency using logarithmic scale
         const normalizedIndex = binIndex / (totalBins - 1);
         const logMin = Math.log10(this._minFreq);
         const logMax = Math.log10(this._maxFreq);
         const logFreq = logMin + normalizedIndex * (logMax - logMin);
-        return Math.pow(10, logFreq);
+        const result = Math.pow(10, logFreq);
+        
+        this._binToFreqCache.set(cacheKey, result);
+        return result;
     }
     
     // Helper method to apply tilt to a dB value based on frequency and spectrum ID
@@ -580,8 +666,18 @@ class iSpectrumChart extends iControl {
     _animate() {
         if (!this._isAnimating) return;
 
+        const frameStart = performance.now();
         this._drawFrame();
-        requestAnimationFrame(() => this._animate());
+        const frameEnd = performance.now();
+        const frameDuration = frameEnd - frameStart;
+
+        // Throttle if frame took too long (e.g., > 20ms)
+        const maxFrameTime = 16; // ms, adjust as needed for your use case
+        if (frameDuration > maxFrameTime) {
+            setTimeout(() => this._animate(), maxFrameTime);
+        } else {
+            requestAnimationFrame(() => this._animate());
+        }
     }
 
     // Add new methods for spectrum management
@@ -601,9 +697,10 @@ class iSpectrumChart extends iControl {
                 peakColor: '#FF5722',
                 showFill: true,
                 showPeak: true
-            }
+            },
+            _needsUpdate: true // Add flag to indicate if spectrum needs redraw
         };
-    
+
         // First spread the defaults, then spread the options to override if specified
         const spectrum = { ...defaultSpectrum, ...options };
         
@@ -623,46 +720,88 @@ class iSpectrumChart extends iControl {
     updateSpectrum(id, data, frequencies) {
         const spectrum = this._spectrumLayers.get(id);
         if (!spectrum) return;
-    
+
         const currentTime = performance.now();
-        
-        // Update frequencies if provided
-        if (frequencies) {
-            spectrum.frequencies = frequencies;
-        }
-        
-        // Ensure decay and peak data arrays match input data length
-        if (spectrum.decayData.length !== data.length) {
-            spectrum.decayData = new Array(data.length).fill({ value: -120, startTime: 0 });
-            spectrum.peakHoldData = new Array(data.length).fill(-120);
-        }
-        
-        // Apply tilt to the data before further processing
-        const tiltedData = new Float32Array(data.length);
-        for (let i = 0; i < data.length; i++) {
-            // Calculate the frequency for this bin if not provided
-            const freq = frequencies?.[i] ?? this._binToFreq(i, data.length);
-            
-            // Apply tilt to the dB value, using the spectrum ID
-            tiltedData[i] = this._applyTilt(data[i], freq, id);
-        }
-        
-        // Update peak hold data with tilted values
-        if (spectrum.isPeakHoldEnabled) {
-            spectrum.peakHoldData = spectrum.peakHoldData.map((peak, i) => 
-                Math.max(peak, tiltedData[i]));
-        }
-        
-        // Update values, keeping track of decay
-        for (let i = 0; i < data.length; i++) {
-            if (tiltedData[i] > spectrum.decayData[i].value || !spectrum.isDecayEnabled ) {
-                spectrum.decayData[i] = {
-                    value: tiltedData[i], 
-                    startValue: tiltedData[i],
-                    startTime: currentTime
-                };
+
+        // --- Add Downsampling Step ---
+        // Calculate the effective drawing width in CSS pixels
+        const cssWidth = this._gridCanvas.width / this._dpr;
+        const effectiveWidth = cssWidth - this._leftPadding - this._rightPadding;
+        // Determine target size, minimum 100 points to ensure some detail
+        const targetSize = Math.max(100, Math.floor(effectiveWidth));
+
+        // Downsample the input data
+        const downsampled = this._downsampleData(data, frequencies, targetSize);
+        const downsampledData = downsampled.data;
+        const downsampledFrequencies = downsampled.frequencies;
+        const N = downsampledData.length; // Use the downsampled size
+
+        // Update frequencies if provided (use downsampled frequencies)
+        spectrum.frequencies = downsampledFrequencies;
+
+        // Ensure decay and peak data arrays match input data length (use downsampled size)
+        if (!spectrum.decayData || spectrum.decayData.length !== N) {
+            spectrum.decayData = new Array(N);
+            for (let i = 0; i < N; ++i) {
+                spectrum.decayData[i] = { value: -120, startTime: 0 };
             }
         }
+
+        // Use typed arrays for peak hold and tilted data (use downsampled size)
+        if (!spectrum.peakHoldData || spectrum.peakHoldData.length !== N) {
+            spectrum.peakHoldData = new Float32Array(N);
+        }
+        if (!spectrum._tiltedData || spectrum._tiltedData.length !== N) {
+            spectrum._tiltedData = new Float32Array(N);
+        }
+        const tiltedData = spectrum._tiltedData;
+
+        // Precompute frequencies if not provided (use downsampled frequencies)
+        let freqs = downsampledFrequencies;
+        if (!freqs) {
+            if (!spectrum._cachedFreqs || spectrum._cachedFreqs.length !== N ||
+                spectrum._cachedFreqsMin !== this._minFreq || spectrum._cachedFreqsMax !== this._maxFreq) {
+                // Precompute log step
+                const logMin = Math.log10(this._minFreq);
+                const logMax = Math.log10(this._maxFreq);
+                const step = (logMax - logMin) / (N - 1);
+                spectrum._cachedFreqs = new Float32Array(N);
+                for (let i = 0; i < N; i++) {
+                    spectrum._cachedFreqs[i] = Math.pow(10, logMin + step * i);
+                }
+                spectrum._cachedFreqsMin = this._minFreq;
+                spectrum._cachedFreqsMax = this._maxFreq;
+            }
+            freqs = spectrum._cachedFreqs;
+        }
+
+        // Apply tilt and update peak/decay in a single loop (use downsampled data)
+        for (let i = 0; i < N; ++i) {
+            const freq = freqs[i];
+            // Inline _applyTilt for performance
+            const tilt = this._getTilt(id);
+            let db = data[i];
+            if (tilt !== 0) {
+                const octavesFromMin = Math.log2(freq / this._minFreq);
+                db += tilt * octavesFromMin;
+            }
+            tiltedData[i] = db;
+
+            // Peak hold update
+            if (spectrum.isPeakHoldEnabled) {
+                spectrum.peakHoldData[i] = Math.max(spectrum.peakHoldData[i], db);
+            }
+
+            // Decay update
+            if (tiltedData[i] > spectrum.decayData[i].value || !spectrum.isDecayEnabled) {
+                spectrum.decayData[i].value = tiltedData[i];
+                spectrum.decayData[i].startValue = tiltedData[i];
+                spectrum.decayData[i].startTime = currentTime;
+            }
+        }
+
+        // Mark this spectrum as needing an update
+        spectrum._needsUpdate = true;
     }
 
     // Update _drawFrame method to handle variable data length
@@ -742,49 +881,64 @@ class iSpectrumChart extends iControl {
 
     // Update the drawing code in _drawFrame to use quadratic curves directly
     _drawFrame() {
+
         const gl = this._spectrumCtx;
         const currentTime = performance.now();
-        
+
         // Cache frequently used values
         const width = this._spectrumCanvas.width;
         const height = this._spectrumCanvas.height;
-        
+
         // Clear WebGL canvas
         gl.clear(gl.COLOR_BUFFER_BIT);
         gl.viewport(0, 0, width, height);
-        
+
         // Sort spectrums by z-index
         const sortedSpectrums = [...this._spectrumLayers.entries()]
             .sort((a, b) => a[1].zIndex - b[1].zIndex);
-        
+
         // Pre-calculate common values
         const startX = this._freqToX(this._minFreq);
         const endX = this._freqToX(this._maxFreq);
-        
+
         // Enable blending for transparency
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        
-        // Draw each spectrum
+
+        // First, iterate through all spectrums to update points for those that need it
+        for (const [id, spectrum] of sortedSpectrums) {
+            // If decay or peak hold is enabled, it always needs an update
+            if (spectrum.isDecayEnabled || spectrum.isPeakHoldEnabled) {
+                spectrum._needsUpdate = true;
+            }
+            // If updateSpectrum was called, _needsUpdate is already true
+
+            // If the spectrum needs an update, prepare its points
+            if (spectrum._needsUpdate) {
+                const scale = this._scales.get(spectrum.scaleId || 'default');
+                // _prepareSpectrumPoints will update spectrum._cachedPoints
+                this._prepareSpectrumPoints(spectrum, currentTime, scale);
+
+                // Reset the update flag after preparing points
+                spectrum._needsUpdate = false;
+            }
+        }
+        // Now, draw ALL spectrums using their (potentially updated) cached points
         for (const [id, spectrum] of sortedSpectrums) {
             const scale = this._scales.get(spectrum.scaleId || 'default');
             const bottomY = this._dbToY(scale.minDb, spectrum.scaleId);
-            
-            // Prepare and draw main spectrum
-            const points = this._prepareSpectrumPoints(spectrum, currentTime, scale);
-            this._drawSpectrum(gl, points, startX, endX, bottomY, spectrum.preferences);
-    
-            // Draw peak hold if enabled
+
+            // Draw main spectrum using the cached points
+            // The points were prepared in the previous loop if needed
+            this._drawSpectrum(gl, spectrum._cachedPoints, startX, endX, bottomY, spectrum.preferences);
+
+            // Draw peak hold if enabled (also uses cached peak points)
             if (spectrum.isPeakHoldEnabled && spectrum.preferences.showPeak) {
-                const peakPoints = this._preparePeakPoints(spectrum, scale);
-                this._drawPeakHold(gl, peakPoints, spectrum.preferences);
+                // Peak points are updated in updateSpectrum, no separate preparation needed here
+                this._drawPeakHold(gl, spectrum.peakHoldData, spectrum.preferences);
             }
         }
-    
-        // Update FPS counter (less frequently)
-        if (currentTime - this._lastTime >= 1000) {
-            this._calculateFPS();
-        }
+
     }
     
     _drawInitialSpectrum() {
@@ -806,7 +960,7 @@ class iSpectrumChart extends iControl {
         gl.bindBuffer(gl.ARRAY_BUFFER, this._positionBuffer);
         
         // Upload vertices and set attributes
-        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
         gl.vertexAttribPointer(this._positionLocation, 2, gl.FLOAT, false, 0, 0);
         
         // Set uniforms
@@ -819,7 +973,7 @@ class iSpectrumChart extends iControl {
         gl.drawArrays(gl.LINES, 0, 2);
     }
 
-     _prepareSpectrumPoints(spectrum, currentTime, scale) {
+    _prepareSpectrumPoints(spectrum, currentTime, scale) {
         const N = spectrum.decayData.length;
         let freqs = spectrum.frequencies;
 
@@ -841,23 +995,30 @@ class iSpectrumChart extends iControl {
             freqs = spectrum._cachedFreqs;
         }
 
-        const points = new Array(N);
-
+        // Reuse points array and its objects
+        if (!spectrum._cachedPoints || spectrum._cachedPoints.length !== N) {
+            spectrum._cachedPoints = new Array(N);
+            for (let i = 0; i < N; ++i) {
+                spectrum._cachedPoints[i] = { x: 0, y: 0 };
+            }
+        }
+        const points = spectrum._cachedPoints;
+        
         // If decay is not enabled, skip decay logic
         if (!spectrum.isDecayEnabled) {
-            for (let i = 0; i < N; i++) {
+            for (let i = 0; i < N; ++i) {
+                // Instead of creating new objects, update existing ones
                 const dbValue = spectrum.decayData[i].value;
                 const clampedValue = Math.min(scale.maxDb, Math.max(scale.minDb, dbValue));
-                points[i] = {
-                    x: this._freqToX(freqs[i]),
-                    y: this._dbToY(clampedValue, spectrum.scaleId)
-                };
+                points[i].x = this._freqToX(freqs[i]);
+                points[i].y = this._dbToY(clampedValue, spectrum.scaleId);
             }
             return points;
         }
+        
 
         // Batch process all points with decay
-        for (let i = 0; i < N; i++) {
+        for (let i = 0; i < N; ++i) {
             if (spectrum.decayData[i].startTime > 0) {
                 const elapsed = currentTime - spectrum.decayData[i].startTime;
                 const startValue = spectrum.decayData[i].startValue ?? spectrum.decayData[i].value;
@@ -869,10 +1030,9 @@ class iSpectrumChart extends iControl {
             }
             const dbValue = spectrum.decayData[i].value;
             const clampedValue = Math.min(scale.maxDb, Math.max(scale.minDb, dbValue));
-            points[i] = {
-                x: this._freqToX(freqs[i]),
-                y: this._dbToY(clampedValue, spectrum.scaleId)
-            };
+            // Instead of creating new objects, update existing ones
+            points[i].x = this._freqToX(freqs[i]);
+            points[i].y = this._dbToY(clampedValue, spectrum.scaleId);
         }
 
         return points;
@@ -968,8 +1128,8 @@ class iSpectrumChart extends iControl {
     
     // Replace the existing _drawSpectrum method
     _drawSpectrum(ctx, points, startX, endX, bottomY, preferences) {
-        const gl = ctx;
         
+        const gl = ctx;
         // Set up WebGL state
         gl.useProgram(this._shaderProgram);
         gl.enableVertexAttribArray(this._positionLocation);
@@ -986,7 +1146,7 @@ class iSpectrumChart extends iControl {
             gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
             
             const vertices = new Float32Array(this._prepareVertices(points, startX, endX, bottomY));
-            gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+            gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
             
             const fillColor = this._parseColor(preferences.fillColor);
             // Set color directly without creating new array
@@ -999,7 +1159,7 @@ class iSpectrumChart extends iControl {
         const pixelRatio = window.devicePixelRatio || 1;
         const lineWidth = (preferences.lineWidth || 2) * pixelRatio;
         const lineVertices = this._prepareLineVertices(points, lineWidth);
-        gl.bufferData(gl.ARRAY_BUFFER, lineVertices, gl.STATIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, lineVertices, gl.DYNAMIC_DRAW);
         const lineColor = this._parseColor(preferences.lineColor);
         gl.uniform4f(this._colorLocation, lineColor[0], lineColor[1], lineColor[2], lineColor[3]);
         
@@ -1024,7 +1184,7 @@ class iSpectrumChart extends iControl {
         gl.bindBuffer(gl.ARRAY_BUFFER, this._positionBuffer);
         
         // Upload vertices and set attributes
-        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
         gl.vertexAttribPointer(this._positionLocation, 2, gl.FLOAT, false, 0, 0);
         
         // Set uniforms
