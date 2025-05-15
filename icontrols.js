@@ -261,7 +261,7 @@ class iDraggable extends iControl {
     });
 
     this._domElement.addEventListener("mouseover", event => {
-      if (!this._captured) {
+      if (!this._captured && !this._disabled) {
         if (this._horizontal == true) {
           this._domElement.style.cursor = "ew-resize";
         } else {
@@ -271,12 +271,13 @@ class iDraggable extends iControl {
     });
 
     this._domElement.addEventListener("mouseout", event => {
-      if (!this._captured)
+      if (!this._captured && ! this._disabled)
         this._domElement.style.cursor = "initial";
     });
 
     // Add mouse wheel event handler
     this.handleWheel = (event) => {
+      if(this._disabled == true) return;
       event.preventDefault();
       
       // Determine direction and calculate delta
@@ -293,6 +294,7 @@ class iDraggable extends iControl {
     this._domElement.addEventListener("wheel", this.handleWheel);
 
     this.touchMouseStart = (event) => {
+      if(this._disabled == true) return;
       var clientX = -1;
       var clientY = -1;
       if (event.type == "touchstart") {
@@ -313,7 +315,7 @@ class iDraggable extends iControl {
     this._domElement.addEventListener("touchstart", this.touchMouseStart);
 
     this.touchMouseMove = (event) => {
-
+      if(this._disabled == true) return;
       var clientX = -1;
       var clientY = -1;
 
@@ -351,6 +353,7 @@ class iDraggable extends iControl {
     document.addEventListener("mousemove", this.touchMouseMove);
 
     this.touchMouseUp = (event) => {
+      if(this._disabled == true) return;
       if (this._captured == true) {
         this._captured = false;
         this._domElement.classList.remove('captured-control');
@@ -405,14 +408,17 @@ class iVerticalFader extends iDraggable {
     this._inputValue = document.getElementById(options.inputValueId);
     if (this._inputValue) {
       this._inputValue.addEventListener("click", event => {
+        if(this._disabled == true) return;
         this._inputValue.select();
       });
 
       this._inputValue.addEventListener("blur", event => {
+        if(this._disabled == true) return;
         this.setValue(this.toNormalized(this._inputValue.value));
       });
 
       this._inputValue.addEventListener("keypress", event => {
+        if(this._disabled == true) return;
         if (event.which === 13) {
           this.setValue(this.toNormalized(this._inputValue.value));
           document.activeElement.blur();
@@ -475,18 +481,22 @@ class iRotatingKnob extends iDraggable {
     if (this._inputValue) {
       if (this._inputValue.nodeName === "SELECT") {
         this._inputValue.addEventListener("change", event => {
-            this.setValue(this.toNormalized(this._inputValue.value)); 
+          if(this._disabled == true) return;
+          this.setValue(this.toNormalized(this._inputValue.value)); 
         });
       }
       this._inputValue.addEventListener("click", event => {
+        if(this._disabled == true) return;
         this._inputValue.select();
       });
 
       this._inputValue.addEventListener("blur", event => {
+        if(this._disabled == true) return;
         this.setValue(this.toNormalized(this._inputValue.value));
       });
 
       this._inputValue.addEventListener("keypress", event => {
+        if(this._disabled == true) return;
         if (event.which === 13) {
           this.setValue(this.toNormalized(this._inputValue.value));
           document.activeElement.blur();
@@ -522,6 +532,7 @@ class iSwitch extends iControl {
     super(options);
 
     this._domElement.addEventListener('click', event => {
+      if(this._disabled == true) return;
       if (this._value == 0) {
         this.setValue(1);
       } else {
@@ -562,6 +573,7 @@ class iButton extends iControl {
     super(options);
     
     this._domElement.addEventListener('click', event => {
+      if(this._disabled == true) return;
       super.setValue(1);
       super.setValue(0);
     });
@@ -579,6 +591,7 @@ class iSelect extends iControl {
     super(options);
 
     this._domElement.addEventListener("change", event => {
+      if(this._disabled == true) return;
       document.activeElement.blur();
       this.setValue(this.toNormalized(this._domElement.value));
     });
@@ -601,6 +614,7 @@ class iRadio extends iControl {
     super(options);
 
     this._domElement.addEventListener("click", event => {
+      if(this._disabled == true) return;
       document.activeElement.blur();
       this.setValue(this.toNormalized(event.currentTarget.value));
     });
@@ -626,6 +640,7 @@ class iText extends iControl {
     super(options);
 
     this._domElement.addEventListener("input", event => {
+      if(this._disabled == true) return;
       this.setValue(this.toNormalized(this._domElement.value));
     });
   }
@@ -755,14 +770,17 @@ class iDraggableInput extends iDraggable {
     super(options);
 
     this._domElement.addEventListener("click", event => {
+      if(this._disabled == true) return;
       this._domElement.select();
     });
 
     this._domElement.addEventListener("blur", event => {
+      if(this._disabled == true) return;
       this.setValue(this.toNormalized(Number(this._domElement.value)));
     });
 
     this._domElement.addEventListener("keypress", event => {
+      if(this._disabled == true) return;
       if (event.which === 13) {
         this.setValue(this.toNormalized(Number(this._domElement.value)));
         document.activeElement.blur();
