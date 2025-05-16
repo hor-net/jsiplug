@@ -670,19 +670,32 @@ class iSegmentMeter extends iControl {
     if(options.decayTime) {
       this._decayTime = options.decayTime;
     }
-    
+
     this._nrSegments = this._domElement.children.length;
     if (options.nrSegments) {
       this._nrSegments = options.nrSegments;
     }
 
+    // Add properties for requestAnimationFrame
+    this._needsUpdate = false;
+    this._animationFrameId = null;
+
     // start metering update
-    this.updateMeter();
-    
+    // this.updateMeter(); // Replace initial update with scheduled update
+    this.scheduleUpdate();
+
     if(Number(this._decayTime) > 0) {
       setInterval(() => this.decayValue(), Number(this._decayTime));
     }
     setInterval(() => this.decayPeakValue(), 3000);
+  }
+
+  // Method to schedule an update using requestAnimationFrame
+  scheduleUpdate() {
+    if (!this._needsUpdate) {
+      this._needsUpdate = true;
+      this._animationFrameId = requestAnimationFrame(() => this.updateMeter());
+    }
   }
 
   setValue(value) {
@@ -693,25 +706,25 @@ class iSegmentMeter extends iControl {
       this._value = value;
       this._maxVal = value;
     }
-    
+
     // we don't call our super here because we
     // don't want to send the parameter value to the host
     if (value > this._value) {
       this._value = value;
+      // this.updateMeter(); // Replace direct update with scheduled update
+      this.scheduleUpdate();
     }
-    if (this._value > this._maxVal) {
-      this._value = this._maxVal;
-    }
-    if (this._value > this._peakVal) {
-      this._peakVal = this._value;
-    }
-    
-    if (this._decayTime == 0) {
-      this.updateMeter();
+    if (value > this._peakVal) {
+      this._peakVal = value;
+      // this.updateMeter(); // Replace direct update with scheduled update
+      this.scheduleUpdate();
     }
   }
 
   updateMeter() {
+    if (!this._needsUpdate) {
+      return; // Only update if needed
+    }
     // init our segments
     for (var i = 0; i < this._nrSegments; i++) {
       
@@ -740,22 +753,27 @@ class iSegmentMeter extends iControl {
         }
       }
     }
+
+    this._needsUpdate = false;
+
     if(this._decayTime > 0)
       requestAnimationFrame(this.updateMeter.bind(this));
+
   }
 
   decayValue() {
-    if (this._value > this._minVal - 1) {
-      this._value = this._value - 1;
-      if (this._minVal == 0 && this._value < 0) {
-        this._value = 0;
-      }
+    if(this._value > this._minVal) {
+      this._value--;
+      // this.updateMeter(); // Replace direct update with scheduled update
+      this.scheduleUpdate();
     }
   }
 
   decayPeakValue() {
-    if (this._peakVal > this._minVal - 1) {
-      this._peakVal = this._minVal - 1;
+    if(this._peakVal > this._minVal) {
+      this._peakVal = this._minVal;
+      // this.updateMeter(); // Replace direct update with scheduled update
+      this.scheduleUpdate();
     }
   }
 }
