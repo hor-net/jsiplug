@@ -142,6 +142,7 @@ function BPCFUI(paramIdx) {
 }
 
 function SPVFUI(paramIdx, value) {
+  if (value == null) return;
   var message = {
     "msg": "SPVFUI",
     "paramIdx": paramIdx,

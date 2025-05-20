@@ -138,6 +138,7 @@ class iControl {
   }
 
   setValue(value) {
+    if (isNaN(value)) return;
     if (value > 1) value = 1;
     if (value < 0) value = 0;
     if (this._value != value) {
@@ -150,7 +151,9 @@ class iControl {
       var controls = GetControlByParamId(this._paramIdx);
       for (var i = 0; i < controls.length; i++) {
         if (controls[i] != this) {
+          controls[i]._informHostOfParamChange = false;
           controls[i].setValue(value);
+          controls[i]._informHostOfParamChange = true;
         }
       }
     }
