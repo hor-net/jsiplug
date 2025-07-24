@@ -790,9 +790,82 @@ class iDraggableInput extends iDraggable {
   constructor(options) {
     super(options);
 
+    // Variables to track touch/drag behavior
+    this._touchStartTime = 0;
+    this._touchStartX = 0;
+    this._touchStartY = 0;
+    this._hasMoved = false;
+    this._dragThreshold = 5; // pixels
+    this._tapTimeThreshold = 200; // milliseconds
+
+    // Override the parent's touchstart handler
+    this._domElement.removeEventListener("touchstart", this.touchMouseStart);
+    
+    // Custom touchstart handler for input
+    this.inputTouchStart = (event) => {
+      if(this._disabled == true) return;
+      
+      var touch = event.changedTouches[0];
+      this._touchStartTime = Date.now();
+      this._touchStartX = touch.clientX;
+      this._touchStartY = touch.clientY;
+      this._hasMoved = false;
+      
+      // Prevent default to avoid immediate keyboard popup
+      event.preventDefault();
+      
+      // Call parent's touchstart logic
+      this.touchMouseStart(event);
+    };
+
+    // Custom touchmove handler to track movement
+    this.inputTouchMove = (event) => {
+      if(this._disabled == true) return;
+      
+      if (this._captured) {
+        var touch = event.changedTouches[0];
+        var deltaX = Math.abs(touch.clientX - this._touchStartX);
+        var deltaY = Math.abs(touch.clientY - this._touchStartY);
+        
+        if (deltaX > this._dragThreshold || deltaY > this._dragThreshold) {
+          this._hasMoved = true;
+        }
+      }
+      
+      // Call parent's touchmove logic
+      this.touchMouseMove(event);
+    };
+
+    // Custom touchend handler
+    this.inputTouchEnd = (event) => {
+      if(this._disabled == true) return;
+      
+      var touchEndTime = Date.now();
+      var touchDuration = touchEndTime - this._touchStartTime;
+      
+      // If it was a quick tap without movement, focus the input to show keyboard
+      if (!this._hasMoved && touchDuration < this._tapTimeThreshold) {
+        setTimeout(() => {
+          this._domElement.focus();
+          this._domElement.select();
+        }, 10);
+      }
+      
+      // Call parent's touchend logic
+      this.touchMouseUp(event);
+    };
+
+    // Add custom touch event listeners
+    this._domElement.addEventListener("touchstart", this.inputTouchStart);
+    document.addEventListener("touchmove", this.inputTouchMove);
+    this._domElement.addEventListener("touchend", this.inputTouchEnd);
+
     this._domElement.addEventListener("click", event => {
       if(this._disabled == true) return;
-      this._domElement.select();
+      // Only select if not coming from a touch event
+      if (event.detail !== 0) { // detail is 0 for programmatic clicks, > 0 for real clicks
+        this._domElement.select();
+      }
     });
 
     this._domElement.addEventListener("blur", event => {
