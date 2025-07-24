@@ -221,6 +221,15 @@ class iSpectrumChart extends iControl {
     }
 
     _setupTooltip() {
+        // Check if device is iOS - disable tooltip on iOS as it's unmanageable
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        
+        if (isIOS) {
+            // Don't setup tooltip on iOS devices
+            return;
+        }
+        
         this._tooltip = document.createElement('div');
         this._tooltip.style.cssText = 'position:absolute;display:none;background-color:rgba(0,0,0,0.8);color:white;padding:8px;border-radius:4px;font-size:12px;pointer-events:none;z-index:1000;';
         this._domElement.appendChild(this._tooltip);
@@ -1330,6 +1339,11 @@ class iSpectrumChart extends iControl {
     }
 
     _handleMouseMove(event) {
+        // Return early if tooltip is not available (e.g., on iOS)
+        if (!this._tooltip) {
+            return;
+        }
+        
         // Clear any existing timeout
         if (this._tooltipTimeout) {
             clearTimeout(this._tooltipTimeout);
@@ -1370,6 +1384,11 @@ class iSpectrumChart extends iControl {
     }
     
     _handleMouseOut() {
+        // Return early if tooltip is not available (e.g., on iOS)
+        if (!this._tooltip) {
+            return;
+        }
+        
         if (this._tooltipTimeout) {
             clearTimeout(this._tooltipTimeout);
         }
