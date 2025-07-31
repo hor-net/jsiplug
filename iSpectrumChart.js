@@ -19,6 +19,7 @@ class iSpectrumChart extends iControl {
         this._lastTime = performance.now();
         this._fps = 0;
         this._isAnimating = false;
+        this._isPaused = false;
 
         // Initialize caches for coordinate conversion methods
         this._freqToXCache = new Map();
@@ -675,6 +676,12 @@ class iSpectrumChart extends iControl {
     _animate() {
         if (!this._isAnimating) return;
 
+        // If paused, continue the animation loop but don't draw
+        if (this._isPaused) {
+            requestAnimationFrame(() => this._animate());
+            return;
+        }
+
         const frameStart = performance.now();
         this._drawFrame();
         const frameEnd = performance.now();
@@ -687,6 +694,14 @@ class iSpectrumChart extends iControl {
         } else {
             requestAnimationFrame(() => this._animate());
         }
+    }
+
+    /**
+     * Pause or resume the spectrum visualization
+     * @param {boolean} isPaused - true to pause, false to resume
+     */
+    pause(isPaused) {
+        this._isPaused = isPaused;
     }
 
     // Add new methods for spectrum management
