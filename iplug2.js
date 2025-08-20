@@ -332,9 +332,3 @@ function SetupControls() {
   dispatchEvent(event);
   
 }
-
-// attach all the controls, both those with a parameter id and those
-// with a message id (not linked to a parameter)
-addEventListener('DOMContentLoaded', (event) => {
-  SetupControls();
-});
