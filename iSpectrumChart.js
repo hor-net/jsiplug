@@ -472,7 +472,7 @@ class iSpectrumChart extends iControl {
         // Style setup
         ctx.strokeStyle = this._preferences.grid.normalLine.color;
         ctx.fillStyle = this._preferences.text.color;
-        ctx.font = `${this._preferences.text.normal.weight} ${this._preferences.text.normal.size}px ${this._preferences.text.normal.font}`;
+        ctx.font = `${this._preferences.text.normal.weight} ${this._preferences.text.normal.size}px "${this._preferences.text.normal.font}", Arial, sans-serif`;
         ctx.textAlign = 'right';
         ctx.textBaseline = 'middle';
         
@@ -511,7 +511,7 @@ class iSpectrumChart extends iControl {
                 const textStyle = emphasizedFreqs.includes(freq) ? 
                     this._preferences.text.emphasized : 
                     this._preferences.text.normal;
-                ctx.font = `${textStyle.weight} ${textStyle.size}px ${textStyle.font}`;
+                ctx.font = `${textStyle.weight} ${textStyle.size}px "${textStyle.font}", Arial, sans-serif`;
                 let label = freq.toString();
                 if (freq === 1000) label = '1K';
                 if (freq === 10000) label = '10K';
@@ -538,7 +538,7 @@ class iSpectrumChart extends iControl {
         
         // Draw emphasized frequency labels
         const emphasizedFont = this._preferences.text.emphasized;
-        ctx.font = `${emphasizedFont.weight} ${emphasizedFont.size}px "${emphasizedFont.font}"`;
+        ctx.font = `${emphasizedFont.weight} ${emphasizedFont.size}px "${emphasizedFont.font}", Arial, sans-serif`;
         ctx.textAlign = 'center';
         ctx.fillStyle = this._preferences.text.color;
         ctx.fillText('20', minX, this._gridCanvas.height/this._dpr - this._preferences.text.normal.size);  // Fixed reference
@@ -546,7 +546,7 @@ class iSpectrumChart extends iControl {
         
         // Restore styles for regular grid
         ctx.strokeStyle = '#ccc';
-        ctx.font = '12px Arial';
+        ctx.font = `${this._preferences.text.normal.weight} ${this._preferences.text.normal.size}px "${this._preferences.text.normal.font}", Arial, sans-serif`;
         
         // Draw all frequency bands
         freqBandsBelow100.forEach(freq => drawFreqLine(freq, false));
@@ -584,8 +584,8 @@ class iSpectrumChart extends iControl {
                     ctx.stroke();
 
                     ctx.font = db === 0
-                        ? `${this._preferences.text.emphasized.weight} ${this._preferences.text.emphasized.size}px "${this._preferences.text.emphasized.font}"`
-                        : `${this._preferences.text.normal.weight} ${this._preferences.text.normal.size}px "${this._preferences.text.normal.font}"`;
+                        ? `${this._preferences.text.emphasized.weight} ${this._preferences.text.emphasized.size}px "${this._preferences.text.emphasized.font}", Arial, sans-serif`
+                        : `${this._preferences.text.normal.weight} ${this._preferences.text.normal.size}px "${this._preferences.text.normal.font}", Arial, sans-serif`;
                     ctx.fillStyle = scale.color;
                     ctx.textAlign = scale.position === 'left' ? 'right' : 'left';
                     ctx.textBaseline = 'middle';
@@ -616,8 +616,8 @@ class iSpectrumChart extends iControl {
                     ctx.stroke();
 
                     ctx.font = db === 0
-                        ? `${this._preferences.text.emphasized.weight} ${this._preferences.text.emphasized.size}px "${this._preferences.text.emphasized.font}"`
-                        : `${this._preferences.text.normal.weight} ${this._preferences.text.normal.size}px "${this._preferences.text.normal.font}"`;
+                        ? `${this._preferences.text.emphasized.weight} ${this._preferences.text.emphasized.size}px "${this._preferences.text.emphasized.font}", Arial, sans-serif`
+                        : `${this._preferences.text.normal.weight} ${this._preferences.text.normal.size}px "${this._preferences.text.normal.font}", Arial, sans-serif`;
                     ctx.fillStyle = scale.color;
                     ctx.textAlign = scale.position === 'left' ? 'right' : 'left';
                     ctx.textBaseline = 'middle';
@@ -649,7 +649,7 @@ class iSpectrumChart extends iControl {
         
         // Restore original styles
         ctx.strokeStyle = '#ccc';
-        ctx.font = '12px Arial';
+        ctx.font = `${this._preferences.text.normal.weight} ${this._preferences.text.normal.size}px "${this._preferences.text.normal.font}", Arial, sans-serif`;
         ctx.textBaseline = 'middle';  // Keep consistent text baseline for all labels
     }
     
@@ -674,6 +674,7 @@ class iSpectrumChart extends iControl {
     }
 
     _animate() {
+
         if (!this._isAnimating) return;
 
         // If paused, continue the animation loop but don't draw

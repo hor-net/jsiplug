@@ -357,6 +357,16 @@ class iDraggable extends iControl {
 
     this.touchMouseUp = (event) => {
       if(this._disabled == true) return;
+      
+      // Don't interfere with dropdown interactions
+      if (event.target && (event.target.tagName === 'SELECT' || 
+                           event.target.tagName === 'OPTION' || 
+                           event.target.closest('select') ||
+                           event.target.closest('.control') ||
+                           event.target.closest('.eq-control-button'))) {
+        return;
+      }
+      
       if (this._captured == true) {
         this._captured = false;
         this._domElement.classList.remove('captured-control');
