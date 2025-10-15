@@ -129,6 +129,9 @@ class iSpectrumChart extends iControl {
         const downsampledData = new Float32Array(targetSize);
         const downsampledFrequencies = new Float32Array(targetSize); // Always create frequencies array
 
+        // Define a minimum threshold to avoid spurious peaks from noise floor
+        const minThreshold = -100; // dB - adjust this value as needed
+        
         for (let i = 0; i < targetSize; i++) {
             // Calculate the range of original indices that map to this target index
             const originalStartIndex = Math.floor((i / targetSize) * N);
@@ -136,21 +139,89 @@ class iSpectrumChart extends iControl {
 
             // Find the maximum dB value in this range (peak detection)
             let maxDb = -Infinity;
+            let maxIndex = originalStartIndex;
+            let validDataFound = false;
+            
             for (let j = originalStartIndex; j <= originalEndIndex; j++) {
-                maxDb = Math.max(maxDb, data[j]);
+                const v = data[j];
+                // Only consider values above the minimum threshold and not -Infinity
+                if (isFinite(v) && v > minThreshold) {
+                    validDataFound = true;
+                    if (v > maxDb) {
+                        maxDb = v;
+                        maxIndex = j;
+                    }
+                }
             }
+            
+            // If no valid data found in this range, interpolate from neighboring valid points
+            if (!validDataFound || maxDb === -Infinity) {
+                // Look for the nearest valid data points for interpolation
+                let leftValue = minThreshold;
+                let rightValue = minThreshold;
+                
+                // Search backwards for a valid point
+                for (let k = originalStartIndex - 1; k >= 0; k--) {
+                    if (isFinite(data[k]) && data[k] > minThreshold) {
+                        leftValue = data[k];
+                        break;
+                    }
+                }
+                
+                // Search forwards for a valid point
+                for (let k = originalEndIndex + 1; k < N; k++) {
+                    if (isFinite(data[k]) && data[k] > minThreshold) {
+                        rightValue = data[k];
+                        break;
+                    }
+                }
+                
+                // Use interpolated value instead of -Infinity
+                maxDb = (leftValue + rightValue) / 2;
+                maxIndex = Math.floor((originalStartIndex + originalEndIndex) / 2);
+            }
+            
             downsampledData[i] = maxDb;
 
             // Calculate frequency for the downsampled point
-            // Use the frequency at the start index of the range, or calculate if frequencies array is null
+            // Use the frequency at the index of the peak within the range,
+            // or calculate if frequencies array is null
             if (frequencies) {
-                 downsampledFrequencies[i] = frequencies[originalStartIndex];
+                downsampledFrequencies[i] = frequencies[maxIndex];
             } else {
-                 downsampledFrequencies[i] = this._binToFreq(originalStartIndex, N);
+                downsampledFrequencies[i] = this._binToFreq(maxIndex, N);
             }
         }
 
+        // Apply smoothing filter to reduce discontinuities
+        this._applySmoothingFilter(downsampledData);
+        
         return { data: downsampledData, frequencies: downsampledFrequencies };
+    }
+
+    // Add smoothing filter method to reduce discontinuities
+    _applySmoothingFilter(data) {
+        const N = data.length;
+        if (N < 3) return; // Need at least 3 points for smoothing
+        
+        // Create a copy for the smoothed values
+        const smoothed = new Float32Array(N);
+        
+        // Apply a simple 3-point moving average filter
+        // Keep first and last points unchanged
+        smoothed[0] = data[0];
+        smoothed[N-1] = data[N-1];
+        
+        // Apply smoothing to middle points
+        for (let i = 1; i < N - 1; i++) {
+            // Use weighted average: 25% previous, 50% current, 25% next
+            smoothed[i] = 0.25 * data[i-1] + 0.5 * data[i] + 0.25 * data[i+1];
+        }
+        
+        // Copy smoothed values back to original array
+        for (let i = 0; i < N; i++) {
+            data[i] = smoothed[i];
+        }
     }
 
     // Add this new method to set up the listener
@@ -341,10 +412,8 @@ class iSpectrumChart extends iControl {
 
     // Add helper method to get dB value based on scale
     _dbToY(db, scaleId = 'default') {
-        // Round the dB value for better cache hits, especially with decay
-        // Rounding to 1 decimal place is a starting point, adjust precision if needed.
-        const roundedDb = Math.round(db * 10) / 10;
-        const cacheKey = `${scaleId}_${roundedDb}`; // Use rounded value in cache key
+        // Use exact dB value for cache key to avoid quantization and achieve smoother rendering
+        const cacheKey = `${scaleId}_${db}`;
 
         if (this._dbToYCache.has(cacheKey)) {
             return this._dbToYCache.get(cacheKey);
@@ -353,7 +422,6 @@ class iSpectrumChart extends iControl {
         const scale = this._scales.get(scaleId) || this._scales.get('default');
         const cssHeight      = this._gridCanvas.height / this._dpr;
         const availableH     = cssHeight - (this._topBottomPadding * 2);
-        // Use the original 'db' value for the calculation to maintain accuracy
         const result = this._topBottomPadding +
                (1 - ((db - scale.minDb)/(scale.maxDb - scale.minDb))) * availableH;
         
@@ -805,7 +873,7 @@ class iSpectrumChart extends iControl {
             const freq = freqs[i];
             // Inline _applyTilt for performance
             const tilt = this._getTilt(id);
-            let db = data[i];
+            let db = downsampledData[i];
             if (tilt !== 0) {
                 const octavesFromMin = Math.log2(freq / this._minFreq);
                 db += tilt * octavesFromMin;
