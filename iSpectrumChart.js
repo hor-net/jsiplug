@@ -66,7 +66,7 @@ class iSpectrumChart extends iControl {
                     weight: 'bold'
                 }
             },
-            background: '#ffffff',
+            background: 'transparent',
             spectrum: {
                 lineColor: '#2196F3',
                 fillColor: 'rgba(33, 150, 243, 0.3)',
@@ -868,15 +868,32 @@ class iSpectrumChart extends iControl {
             freqs = spectrum._cachedFreqs;
         }
 
+        // Calculate frequency-dependent noise floor thresholds for smoother tilt application
+        const baseNoiseFloor = this._calculateNoiseFloorThreshold(downsampledData);
+        
         // Apply tilt and update peak/decay in a single loop (use downsampled data)
         for (let i = 0; i < N; ++i) {
             const freq = freqs[i];
             // Inline _applyTilt for performance
             const tilt = this._getTilt(id);
             let db = downsampledData[i];
+            
+            // Apply tilt with smooth transition based on signal strength
             if (tilt !== 0) {
                 const octavesFromMin = Math.log2(freq / this._minFreq);
-                db += tilt * octavesFromMin;
+                
+                // Calculate frequency-dependent noise floor threshold
+                // Higher frequencies typically have higher noise floors
+                const freqFactor = Math.min(1.0, freq / 1000); // Normalize to 1kHz
+                const adaptiveThreshold = baseNoiseFloor + (freqFactor * 8); // Up to 8dB higher for high freq
+                
+                // Calculate smooth tilt factor (0 to 1) based on how much signal is above noise
+                const signalAboveNoise = Math.max(0, db - adaptiveThreshold);
+                const maxSignalRange = 20; // dB range for full tilt application
+                const tiltFactor = Math.min(1.0, signalAboveNoise / maxSignalRange);
+                
+                // Apply tilt with smooth transition
+                db += tilt * octavesFromMin * tiltFactor;
             }
             tiltedData[i] = db;
 
@@ -1477,5 +1494,34 @@ class iSpectrumChart extends iControl {
             clearTimeout(this._tooltipTimeout);
         }
         this._tooltip.style.display = 'none';
+    }
+
+    // Helper method to calculate dynamic noise floor threshold
+    _calculateNoiseFloorThreshold(data) {
+        // Calculate statistics of the spectrum data
+        const validData = data.filter(v => isFinite(v) && v > -120);
+        
+        if (validData.length === 0) {
+            return -85; // More conservative default threshold
+        }
+        
+        // Sort the data to find percentiles
+        const sortedData = [...validData].sort((a, b) => a - b);
+        const length = sortedData.length;
+        
+        // Use a more conservative approach - focus on the lower percentiles
+        const percentile10Index = Math.floor(length * 0.10);
+        const percentile30Index = Math.floor(length * 0.30);
+        const percentile10 = sortedData[percentile10Index];
+        const percentile30 = sortedData[percentile30Index];
+        
+        // Calculate a more stable noise floor estimate
+        const noiseFloorEstimate = (percentile10 + percentile30) / 2;
+        
+        // Add a conservative margin - smaller than before to reduce artifacts
+        const threshold = noiseFloorEstimate + 4; // Only 4dB above estimated noise floor
+        
+        // Ensure the threshold is reasonable and more conservative
+        return Math.max(-95, Math.min(-50, threshold));
     }
 }
