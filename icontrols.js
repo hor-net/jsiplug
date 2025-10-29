@@ -298,6 +298,22 @@ class iDraggable extends iControl {
 
     this.touchMouseStart = (event) => {
       if(this._disabled == true) return;
+      if (typeof controls !== 'undefined' && controls && Array.isArray(controls)) {
+        for (let i = 0; i < controls.length; i++) {
+          const c = controls[i];
+          if (c && c !== this && typeof c.isCaptured === 'function' && c.isCaptured()) {
+            if (typeof c.setCaptured === 'function') {
+              c.setCaptured(false);
+            } else {
+              c._captured = false;
+            }
+            if (typeof c.getDomElement === 'function') {
+              const el = c.getDomElement();
+              if (el && el.classList) el.classList.remove('captured-control');
+            }
+          }
+        }
+      }
       var clientX = -1;
       var clientY = -1;
       if (event.type == "touchstart") {
@@ -361,9 +377,7 @@ class iDraggable extends iControl {
       // Don't interfere with dropdown interactions
       if (event.target && (event.target.tagName === 'SELECT' || 
                            event.target.tagName === 'OPTION' || 
-                           event.target.closest('select') ||
-                           event.target.closest('.control') ||
-                           event.target.closest('.eq-control-button'))) {
+                           event.target.closest('select'))) {
         return;
       }
       
