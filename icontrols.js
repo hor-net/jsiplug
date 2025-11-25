@@ -30,6 +30,8 @@ class iControl {
     this._captured = false;
     this._informHostOfParamChange = true;
     this._paramIdx = -1;
+    // Generate unique ID for this control instance
+    this._uniqueId = 'control_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     this._minVal = 0;
     this._maxVal = 1;
     this._defaultVal = 0;
@@ -76,6 +78,9 @@ class iControl {
     });
     
     ro.observe(this._domElement);
+    
+    // Store reference to this control instance in the DOM element
+    this._domElement._iControlInstance = this;
   }
 
   setDisabled(disabled) {
@@ -298,6 +303,12 @@ class iDraggable extends iControl {
 
     this.touchMouseStart = (event) => {
       if(this._disabled == true) return;
+      
+      // Use global state management to prevent race conditions
+      if (typeof window._setActiveDraggable === 'function') {
+        window._setActiveDraggable(this._uniqueId);
+      }
+      
       if (typeof controls !== 'undefined' && controls && Array.isArray(controls)) {
         for (let i = 0; i < controls.length; i++) {
           const c = controls[i];
@@ -367,9 +378,16 @@ class iDraggable extends iControl {
         this._startY = clientY;
       }
     };
-
-    document.addEventListener("touchmove", this.touchMouseMove);
-    document.addEventListener("mousemove", this.touchMouseMove);
+     document.addEventListener("mousemove", this.touchMouseMove);
+     document.removeEventListener("touchmove", this.touchMouseMove);
+        // Use global state management to reset this control
+        if (typeof window._resetDraggableControl === 'function') {
+          window._resetDraggableControl(this._uniqueId);
+        } else {
+          // Fallback to local reset
+          this._captured = false;
+          this._domElement.classList.remove('captured-control');
+        }
 
     this.touchMouseUp = (event) => {
       if(this._disabled == true) return;
@@ -382,9 +400,6 @@ class iDraggable extends iControl {
       }
       
       if (this._captured == true) {
-        this._captured = false;
-        this._domElement.classList.remove('captured-control');
-
         var clientX = -1;
         var clientY = -1;
 
@@ -392,16 +407,26 @@ class iDraggable extends iControl {
           var touch = event.changedTouches[0];
           clientX = touch.clientX;
           clientY = touch.clientY;
-        } else if (event.buttons == 1) {
-          if (this._captured == true) {
-            event.preventDefault();
-          }
+        } else {
+          // For mouseup events, always get clientX/clientY regardless of buttons state
           clientX = event.clientX;
           clientY = event.clientY;
         }
-        document.activeElement.blur();
+        
         this._endX = clientX;
         this._endY = clientY;
+        
+        this._captured = false;
+        this._domElement.classList.remove('captured-control');
+
+        // Ensure focus is removed to prevent cursor blinking
+        if (document.activeElement && document.activeElement.blur) {
+          document.activeElement.blur();
+        }
+        // Also remove focus from this element specifically
+        if (this._domElement && this._domElement.blur) {
+          this._domElement.blur();
+        }
       }
     };
     this._domElement.addEventListener("touchend", this.touchMouseUp);
@@ -875,8 +900,10 @@ class iDraggableInput extends iDraggable {
         }, 10);
       }
       
-      // Call parent's touchend logic
-      this.touchMouseUp(event);
+      // Call parent's touchend logic only if we were captured
+      if (this._captured) {
+        this.touchMouseUp(event);
+      }
     };
 
     // Add custom touch event listeners
@@ -1256,7 +1283,89 @@ class iNeedleVUMeter extends iControl {
 //         this._envVuVal = this._envAlpha * (this._envVuVal - level) + level;
 //         level = this._envVuVal;
 //         this._envVuVal = this._envAlpha * (this._envVuVal - level) + level;
-//         level = this._envVuVal;
+// Global state management for draggable controls
+window._activeDraggableId = null;
+
+// Centralized function to safely reset a specific control
+window._resetDraggableControl = function(uniqueId) {
+  // Find all draggable controls and reset the one with matching uniqueId
+  const allDraggables = document.querySelectorAll('.draggable-input, .eq-control-point');
+  allDraggables.forEach(element => {
+    if (element._iControlInstance && element._iControlInstance._uniqueId === uniqueId) {
+      element._iControlInstance._captured = false;
+      element.classList.remove('captured-control');
+      
+      // Remove focus from the element to prevent cursor blinking
+      if (element.blur) {
+        element.blur();
+      }
+    }
+  });
+  
+  // Clear global state if this was the active control
+  if (window._activeDraggableId === uniqueId) {
+    window._activeDraggableId = null;
+  }
+};
+
+// Global function to reset all draggable states
+window._resetAllDraggableStates = function() {
+  window._activeDraggableId = null;
+  // Find all draggable controls and reset their captured state
+  const allDraggables = document.querySelectorAll('.draggable-input, .eq-control-point');
+  allDraggables.forEach(element => {
+    if (element._iControlInstance && element._iControlInstance._captured) {
+      element._iControlInstance._captured = false;
+      element.classList.remove('captured-control');
+      
+      // Remove focus from the element to prevent cursor blinking
+      if (element.blur) {
+        element.blur();
+      }
+    }
+  });
+};
+
+// Centralized function to safely set a control as active
+window._setActiveDraggable = function(uniqueId) {
+  // Always reset all states first to prevent any race conditions
+  // This ensures a completely clean state before activation
+  window._resetAllDraggableStates();
+  
+  // Set the new active control
+  window._activeDraggableId = uniqueId;
+};
+
+// Global document mousedown listener to prevent race conditions
+document.addEventListener('mousedown', function(event) {
+  // Immediately reset all draggable states on any mousedown
+  // This prevents race conditions where a new control is activated
+  // before the previous one's mouseup event is processed
+  if (window._activeDraggableId !== null) {
+    window._resetAllDraggableStates();
+  }
+});
+
+// Global document mouseup listener to ensure state is always reset
+document.addEventListener('mouseup', function(event) {
+  // Immediately reset all draggable states on any mouseup
+  // This ensures clean state regardless of event timing
+  if (window._activeDraggableId !== null) {
+    // Check if the mouseup is on a draggable control
+    let isOnDraggableControl = false;
+    if (event.target) {
+      const closestDraggable = event.target.closest('.draggable-input, .eq-control-point');
+      if (closestDraggable && closestDraggable._iControlInstance) {
+        isOnDraggableControl = true;
+      }
+    }
+    
+    // If mouseup is not on a draggable control, reset all states immediately
+    if (!isOnDraggableControl) {
+      window._resetAllDraggableStates();
+    }
+  }
+});
 // 
 //         level = Math.max(this._minVal, Math.min(this._maxVal, level));
 // 

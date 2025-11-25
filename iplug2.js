@@ -215,7 +215,6 @@ function OnParamChange(paramIdx, val) {
 }
 
 function SetupControls() {
-
     if(controls.length > 0) return;
     
     // all the controls that should receive a message from the delegate
