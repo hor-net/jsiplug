@@ -37,11 +37,20 @@ class iControl {
     this._defaultVal = 0;
     this._value = 0;
     this._step = 10;
+    // Memorizza anche lo step in unità NON normalizzate (ms, dB, ecc.)
+    this._stepRaw = 0; // verrà impostato da setParamData
     this._displayType = 0;
     this._label = "";
     this._changeCallback = function () {
       return;
     }
+    // Soppressione eventi DOM programmatici per evitare ricorsione su alcuni controlli
+    this._suppressDomChange = false;
+    // Coalescing per performance: invia change/SPVFUI al massimo una volta per frame
+    this._rafPending = false;
+    this._pendingValue = null;
+    this._deferWhileCaptured = true;
+    this._dragThresholdFactor = 0.25; // usa ~25% dello step come soglia durante il drag
     if (options.paramData) {
       this._paramData = options.paramData;
       this._paramIdx = Number(options.paramData.id);
@@ -49,7 +58,9 @@ class iControl {
       this._maxVal = Number(options.paramData.max);
       this._defaultVal = Number(options.paramData.default);
       this._value = this._defaultVal;
-      this._step = 1 / Number(options.paramData.step);
+      // Step sicuro: evita Infinity/NaN se step è 0 o non numerico
+      const stepRaw = Number(options.paramData.step);
+      this._step = (isFinite(stepRaw) && stepRaw > 0) ? (1 / stepRaw) : 1;
       this._displayType = Number(options.paramData.displayType);
       this._label = options.paramData.label;
     }
@@ -73,7 +84,6 @@ class iControl {
     const ro = new ResizeObserver(([entry]) => {
       // offsetParent è null quando l'elemento (o un suo antenato) è display:none
       const visible = entry.target.offsetParent !== null;
-      console.log(visible ? '✨ visibile!' : '🙈 nascosto');
       if (visible) this.setValue(this._value);
     });
     
@@ -146,19 +156,71 @@ class iControl {
     if (isNaN(value)) return;
     if (value > 1) value = 1;
     if (value < 0) value = 0;
-    if (this._value != value) {
+    // Evita update ridondanti durante il drag se la variazione è inferiore a una soglia.
+    // Calcola la soglia in spazio NORMALIZZATO, basandosi sullo step reale locale.
+    let threshold = 0;
+    if (this._captured) {
+      const s = this._step; // s = 1/stepRaw
+      const stepRaw = (isFinite(s) && s > 0) ? (1 / s) : (isFinite(this._stepRaw) && this._stepRaw > 0 ? this._stepRaw : 0);
+      if (stepRaw > 0) {
+        const nonNormCurr = this.fromNormalized(this._value);
+        // calcolo locale della variazione normalizzata corrispondente a uno step reale
+        const nonNormNext = Math.min(this._maxVal, Math.max(this._minVal, nonNormCurr + stepRaw));
+        const normNext = this.toNormalized(nonNormNext);
+        const stepNormDelta = Math.abs(normNext - this._value);
+        threshold = stepNormDelta * this._dragThresholdFactor;
+      } else {
+        // fallback conservativo
+        threshold = 0;
+      }
+    }
+    if (Math.abs(value - this._value) < threshold) {
+      // memorizza il valore ma evita di generare eventi se è troppo vicino
+      this._pendingValue = value;
+    } else if (this._value != value) {
       this._value = value;
-      if (this._informHostOfParamChange)
-        SPVFUI(this._paramIdx, this._value);
-      this._changeCallback(this.fromNormalized(this._value));
+      this._pendingValue = value;
+    }
+
+    // Se stiamo trascinando, coalesciamo gli eventi a cadenza frame
+    if (this._captured && this._deferWhileCaptured) {
+      if (!this._rafPending) {
+        this._rafPending = true;
+        requestAnimationFrame(() => {
+          this._rafPending = false;
+          if (this._pendingValue != null) {
+            this._flushChange(this._pendingValue);
+            this._pendingValue = null;
+          }
+        });
+      }
+      return;
+    }
+
+    // Al di fuori del drag, flush immediato
+    if (this._pendingValue != null) {
+      this._flushChange(this._pendingValue);
+      this._pendingValue = null;
+    }
+  }
+
+  _flushChange(valueForPeers) {
+    if (this._informHostOfParamChange)
+      SPVFUI(this._paramIdx, this._value);
+    this._changeCallback(this.fromNormalized(this._value));
+    if (!this._suppressDomChange) {
       this._domElement.dispatchEvent(new Event("change"));
-      // also update all the other controls with the same param idx
+    }
+    // Propaga agli altri controlli solo se questo è l'origine del cambiamento
+    if (this._informHostOfParamChange) {
       var controls = GetControlByParamId(this._paramIdx);
       for (var i = 0; i < controls.length; i++) {
         if (controls[i] != this) {
+          controls[i]._suppressDomChange = true;
           controls[i]._informHostOfParamChange = false;
-          controls[i].setValue(value);
+          controls[i].setValue(valueForPeers);
           controls[i]._informHostOfParamChange = true;
+          controls[i]._suppressDomChange = false;
         }
       }
     }
@@ -205,7 +267,9 @@ class iControl {
     this._minVal = paramData.min;
     this._maxVal = paramData.max;
     this._defaultVal = paramData.default;
-    this._step = 1 / paramData.step;
+    const stepRaw = Number(paramData.step);
+    this._stepRaw = (isFinite(stepRaw) && stepRaw > 0) ? stepRaw : 0;
+    this._step = (isFinite(stepRaw) && stepRaw > 0) ? (1 / stepRaw) : 1;
     this._displayType = paramData.displayType;
     this._label = paramData.label;
   }
@@ -495,7 +559,9 @@ class iVerticalFader extends iDraggable {
     super.setValue(value);
     this.updateFader();
     if (this._inputValue) {
-      this._inputValue.value = Math.round((this.fromNormalized(this._value) * this._step)) / this._step;
+      const nonNorm = this.fromNormalized(this._value);
+      const s = this._step;
+      this._inputValue.value = (isFinite(s) && s > 0) ? (Math.round(nonNorm * s) / s) : nonNorm;
     }
   }
 }
@@ -644,16 +710,22 @@ class iSelect extends iControl {
 
     this._domElement.addEventListener("change", event => {
       if(this._disabled == true) return;
-      document.activeElement.blur();
+      // Durante la gestione del 'change' nativo evitiamo di rilanciare un altro 'change'
+      this._suppressDomChange = true;
       this.setValue(this.toNormalized(this._domElement.value));
+      this._suppressDomChange = false;
+      document.activeElement.blur();
     });
 
   }
 
   setValue(value) {
     let val = this.fromNormalized(value);
+    // Evita ricorsione: non generare 'change' quando aggiorniamo programmaticamente
+    this._suppressDomChange = true;
     this._domElement.value = Math.round(val);
     super.setValue(value);
+    this._suppressDomChange = false;
   }
 }
 
@@ -949,8 +1021,9 @@ class iDraggableInput extends iDraggable {
       }
     }
     super.setValue(value);
-    this._domElement.value = this.fromNormalized(this._value);
-    this._domElement.value = Math.round(this._domElement.value * this._step) / this._step;
+    const nonNorm = this.fromNormalized(this._value);
+    const s = this._step;
+    this._domElement.value = (isFinite(s) && s > 0) ? (Math.round(nonNorm * s) / s) : nonNorm;
   }
 }
 
