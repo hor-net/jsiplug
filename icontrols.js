@@ -686,6 +686,25 @@ class iSwitch extends iControl {
       } else {
         this._domElement.classList.remove("on");
       }
+      // Safari 13 fallback: propagate state to parent eq-control-point
+      var parentPoint = null;
+      // Find closest .eq-control-point without optional chaining
+      var el = this._domElement;
+      while (el && el !== document.body) {
+        if (el.classList && el.classList.contains('eq-control-point')) { parentPoint = el; break; }
+        el = el.parentNode;
+      }
+      if (parentPoint) {
+        // Toggle parent state classes when mute/solo buttons change
+        if (this._domElement.classList && this._domElement.classList.contains('eq-mute-button')) {
+          if (this._value == 1) { parentPoint.classList.add('is-muted'); }
+          else { parentPoint.classList.remove('is-muted'); }
+        }
+        if (this._domElement.classList && this._domElement.classList.contains('eq-solo-button')) {
+          if (this._value == 1) { parentPoint.classList.add('is-solo'); }
+          else { parentPoint.classList.remove('is-solo'); }
+        }
+      }
     }
   }
 
