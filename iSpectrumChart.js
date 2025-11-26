@@ -96,9 +96,17 @@ class iSpectrumChart extends iControl {
         // Initialize WebGL
         this._initWebGL();
         
-        // Setup resize observer
-        this._resizeObserver = new ResizeObserver(() => this._updateCanvasSize());
-        this._resizeObserver.observe(this._domElement);
+        // Setup resize observer (with fallback for Safari 13/Edge legacy)
+        if (typeof ResizeObserver !== 'undefined') {
+            this._resizeObserver = new ResizeObserver(() => this._updateCanvasSize());
+            this._resizeObserver.observe(this._domElement);
+        } else {
+            const resizeHandler = () => this._updateCanvasSize();
+            window.addEventListener('resize', resizeHandler);
+            // Also handle potential CSS-driven size changes
+            document.addEventListener('transitionend', resizeHandler);
+            document.addEventListener('animationend', resizeHandler);
+        }
         
         // Initial setup with zero data
         this._updateCanvasSize();
@@ -1131,7 +1139,9 @@ class iSpectrumChart extends iControl {
         for (let i = 0; i < N; ++i) {
             if (spectrum.decayData[i].startTime > 0) {
                 const elapsed = currentTime - spectrum.decayData[i].startTime;
-                const startValue = spectrum.decayData[i].startValue ?? spectrum.decayData[i].value;
+                const startValue = (spectrum.decayData[i].startValue !== undefined && spectrum.decayData[i].startValue !== null)
+                    ? spectrum.decayData[i].startValue
+                    : spectrum.decayData[i].value;
                 if (elapsed < this._decayTimeConstant) {
                     spectrum.decayData[i].value = startValue + (scale.minDb - startValue) * (elapsed / this._decayTimeConstant);
                 } else {
@@ -1151,8 +1161,12 @@ class iSpectrumChart extends iControl {
     _preparePeakPoints(spectrum, scale) {
         return this._interpolatePoints(
             spectrum.peakHoldData.map((value, i) => {
-                const freq = spectrum.frequencies?.[i] ?? 
-                    this._minFreq * Math.pow(this._maxFreq / this._minFreq, i / (spectrum.peakHoldData.length - 1));
+                var freq;
+                if (spectrum.frequencies && typeof spectrum.frequencies[i] !== 'undefined') {
+                    freq = spectrum.frequencies[i];
+                } else {
+                    freq = this._minFreq * Math.pow(this._maxFreq / this._minFreq, i / (spectrum.peakHoldData.length - 1));
+                }
                 
                 // The tilt is already applied in updateSpectrum, so we don't need to apply it here
                 let peakValue = value;

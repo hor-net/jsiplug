@@ -81,13 +81,25 @@ class iControl {
     this._domElement.addEventListener("dblclick", this.dblClickHandler);
     this._disabled = false;
 
-    const ro = new ResizeObserver(([entry]) => {
-      // offsetParent è null quando l'elemento (o un suo antenato) è display:none
-      const visible = entry.target.offsetParent !== null;
-      if (visible) this.setValue(this._value);
-    });
-    
-    ro.observe(this._domElement);
+    // Osserva resize con fallback per Safari 13/Edge legacy
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(([entry]) => {
+        // offsetParent è null quando l'elemento (o un suo antenato) è display:none
+        const visible = entry.target && entry.target.offsetParent !== null;
+        if (visible) this.setValue(this._value);
+      });
+      ro.observe(this._domElement);
+    } else {
+      const visCheck = () => {
+        try {
+          const visible = this._domElement && this._domElement.offsetParent !== null;
+          if (visible) this.setValue(this._value);
+        } catch (_) {}
+      };
+      window.addEventListener('resize', visCheck);
+      document.addEventListener('transitionend', visCheck);
+      document.addEventListener('animationend', visCheck);
+    }
     
     // Store reference to this control instance in the DOM element
     this._domElement._iControlInstance = this;
