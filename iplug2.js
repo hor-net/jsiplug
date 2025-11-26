@@ -14,9 +14,19 @@ var paramQueue = [];
 
 var setupReady = false;
 
+// Debug: sopprime i log in produzione
+const DEBUG = false;
+function debugLog() {
+  try {
+    if ((typeof window !== 'undefined' && window.__DEBUG) || DEBUG) {
+      console.log.apply(console, arguments);
+    }
+  } catch (_) {}
+}
+
 // FROM DELEGATE
 function SPVFD(paramIdx, val) {
-  console.log("paramIdx: " + paramIdx + " value:" + val);
+  debugLog("paramIdx:", paramIdx, "value:", val);
   if(setupReady) {
     OnParamChange(paramIdx, val);
   } else {
@@ -34,7 +44,7 @@ function SCVFD(ctrlTag, val) {
 }
 
 function SCMFD(ctrlTag, msgTag, msgSize, msg) {
-  console.log("SCMFD ctrlTag: " + ctrlTag + " msgTag:" + msgTag + "msg:" + msg);
+  debugLog("SCMFD ctrlTag:", ctrlTag, "msgTag:", msgTag, "msg:", msg);
   
   // if we are receving the parameter configuration message configure the controls
   if(msgTag == -1) {
@@ -50,10 +60,10 @@ function SCMFD(ctrlTag, msgTag, msgSize, msg) {
 
 function SAMFD(msgTag, dataSize, msg) {
   let data = JSON.parse(window.atob(msg));
-  //console.log(data);
+  debugLog("SAMFD", data);
   if (data["id"] == "params") {
     SetupControls();
-    console.log(data["params"]);
+    debugLog("params", data["params"]);
     for( var i = 0; i < data["params"].length; i++) {
       parameters.push(data["params"][i]);
       var controls = GetControlByParamId(data["params"][i].id);
@@ -71,17 +81,17 @@ function SAMFD(msgTag, dataSize, msg) {
 }
 
 function SMMFD(statusByte, dataByte1, dataByte2) {
-  console.log("Got MIDI Message" + status + ":" + dataByte1 + ":" + dataByte2);
+  debugLog("Got MIDI Message", statusByte, dataByte1, dataByte2);
 }
 
 function SSMFD(offset, size, msg) {
-  console.log("Got Sysex Message");
+  debugLog("Got Sysex Message");
 }
 
 // FROM UI
 // data should be a base64 encoded string
 function SAMFUI(msgTag, ctrlTag = -1, data = 0) {
-  console.log(data);
+  debugLog("SAMFUI data:", data);
   var message = {
     "msg": "SAMFUI",
     "msgTag": msgTag,
@@ -253,7 +263,7 @@ function SetupControls() {
             
             default:
                 var controlname = "new i"+control.getAttribute('data-controltype')+'({"id": control.id, "paramData":paramData}, paramData.id)';
-                console.log(controlname);
+                debugLog(controlname);
                 AddControl( eval(controlname) );
                 break;
         }
@@ -296,7 +306,7 @@ function SetupControls() {
                 break;
             default:
                 var controlname = "new i"+control.getAttribute('data-controltype')+'({"id": control.id, "paramData":paramData}, paramData.id)';
-                console.log(controlname);
+                debugLog(controlname);
                 AddControl( eval(controlname) );
                 break;
         }
