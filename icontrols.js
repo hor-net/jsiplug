@@ -9,7 +9,24 @@
 /**
  * Base icontrol class that must be extended by single widgets
  */
-
+if (typeof Element !== 'undefined' && !Element.prototype.closest) {
+  if (!Element.prototype.matches) {
+    Element.prototype.matches = Element.prototype.msMatchesSelector || Element.prototype.webkitMatchesSelector || function(selector) {
+      var matches = (this.document || this.ownerDocument).querySelectorAll(selector);
+      var i = 0;
+      while (matches[i] && matches[i] !== this) i++;
+      return matches[i] ? true : false;
+    };
+  }
+  Element.prototype.closest = function(selector) {
+    var el = this;
+    while (el && el.nodeType === 1) {
+      if (el.matches && el.matches(selector)) return el;
+      el = el.parentElement || el.parentNode;
+    }
+    return null;
+  };
+}
 
 class iControl {
 
@@ -825,6 +842,10 @@ class iSegmentMeter extends iControl {
     if(options.decayTime) {
       this._decayTime = options.decayTime;
     }
+    this._peakHold = true;
+    if(options.peakHold) {
+      this._peakHold = eval(options.peakHold);
+    }
 
     this._nrSegments = this._domElement.children.length;
     if (options.nrSegments) {
@@ -902,7 +923,7 @@ class iSegmentMeter extends iControl {
       //}
       
       // set the peak hold
-      if (this._peakVal > this._minVal) {
+      if (this._peakVal > this._minVal && this._peakHold) {
         if (Number(this._domElement.children[i].getAttribute('data-value')) == this._peakVal) {
           this._domElement.children[i].classList.add("meter-on");
         }

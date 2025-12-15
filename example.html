@@ -69,6 +69,14 @@
                         <div class="card-body">
                             <label for="spectrum1-zindex" class="form-label">Z-Index</label>
                             <input type="range" class="form-range" id="spectrum1-zindex" min="0" max="10" value="0">
+                            <div class="mt-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="spectrum1-trail-toggle">
+                                    <label class="form-check-label" for="spectrum1-trail-toggle">Scia</label>
+                                </div>
+                                <label for="spectrum1-trail-duration" class="form-label">Durata: <span id="spectrum1-trail-display">1.0s</span></label>
+                                <input type="range" class="form-range" id="spectrum1-trail-duration" min="0" max="100" value="50">
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -83,6 +91,14 @@
                         <div class="card-body">
                             <label for="spectrum2-zindex" class="form-label">Z-Index</label>
                             <input type="range" class="form-range" id="spectrum2-zindex" min="0" max="10" value="1">
+                            <div class="mt-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="spectrum2-trail-toggle">
+                                    <label class="form-check-label" for="spectrum2-trail-toggle">Scia</label>
+                                </div>
+                                <label for="spectrum2-trail-duration" class="form-label">Durata: <span id="spectrum2-trail-display">1.0s</span></label>
+                                <input type="range" class="form-range" id="spectrum2-trail-duration" min="0" max="100" value="50">
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -101,6 +117,12 @@
                     const chart = GetControlById("spectrum-chart");
                     const decaySlider = document.getElementById('decay-time-slider');
                     const decayDisplay = document.getElementById('decay-time-display');
+                    const spectrum1TrailToggle = document.getElementById('spectrum1-trail-toggle');
+                    const spectrum1TrailDuration = document.getElementById('spectrum1-trail-duration');
+                    const spectrum1TrailDisplay = document.getElementById('spectrum1-trail-display');
+                    const spectrum2TrailToggle = document.getElementById('spectrum2-trail-toggle');
+                    const spectrum2TrailDuration = document.getElementById('spectrum2-trail-duration');
+                    const spectrum2TrailDisplay = document.getElementById('spectrum2-trail-display');
                     
                     // Add two spectrum layers
                     chart.addSpectrum('spectrum1', {
@@ -186,6 +208,12 @@
                         const scale = (maxLog - minLog) / 100;
                         return Math.round(Math.pow(10, minLog + (sliderValue * scale)));
                     };
+                    const getTrailDuration = (sliderValue) => {
+                        const minLog = Math.log10(100);
+                        const maxLog = Math.log10(5000);
+                        const scale = (maxLog - minLog) / 100;
+                        return Math.round(Math.pow(10, minLog + (sliderValue * scale)));
+                    };
                     
                     // Update decay time when slider changes
                     decaySlider.addEventListener('input', (e) => {
@@ -195,6 +223,23 @@
                             `${decayTime}ms`;
                         decayDisplay.textContent = displayText;
                         chart.updatePreferences({ decayTime });
+                    });
+
+                    spectrum1TrailToggle.addEventListener('change', (e) => {
+                        chart.updatePreferences({ spectrumPreferences: { spectrum1: { trailEnabled: e.target.checked } } });
+                    });
+                    spectrum1TrailDuration.addEventListener('input', (e) => {
+                        const ms = getTrailDuration(e.target.value);
+                        spectrum1TrailDisplay.textContent = ms >= 1000 ? `${(ms/1000).toFixed(1)}s` : `${ms}ms`;
+                        chart.updatePreferences({ spectrumPreferences: { spectrum1: { trailDuration: ms } } });
+                    });
+                    spectrum2TrailToggle.addEventListener('change', (e) => {
+                        chart.updatePreferences({ spectrumPreferences: { spectrum2: { trailEnabled: e.target.checked } } });
+                    });
+                    spectrum2TrailDuration.addEventListener('input', (e) => {
+                        const ms = getTrailDuration(e.target.value);
+                        spectrum2TrailDisplay.textContent = ms >= 1000 ? `${(ms/1000).toFixed(1)}s` : `${ms}ms`;
+                        chart.updatePreferences({ spectrumPreferences: { spectrum2: { trailDuration: ms } } });
                     });
 
                     chart.updatePreferences({
@@ -222,7 +267,11 @@
                             }
                         },
                         background: 'rgb(225,225,225)',
-                        decayTime: getDecayTime(50) // Initial decay time
+                        decayTime: getDecayTime(50),
+                        spectrumPreferences: {
+                            spectrum1: { trailEnabled: false, trailDuration: getTrailDuration(50) },
+                            spectrum2: { trailEnabled: false, trailDuration: getTrailDuration(50) }
+                        }
                     });
 
                     // Generate different spectrum data for each layer

@@ -239,7 +239,8 @@ function SetupControls() {
                     "maxVal":control.getAttribute('data-maxval'),
                     "zeroVal":control.getAttribute('data-zeroval'),
                     "decayTime":control.getAttribute('data-decaytime'),
-                    "messageId":control.getAttribute("data-messageid")
+                    "peakHold":control.getAttribute('data-peakhold'),
+                    "messageId":control.getAttribute("data-messageid"),
                 }));
                 break;
             

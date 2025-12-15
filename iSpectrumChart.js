@@ -21,6 +21,10 @@ class iSpectrumChart extends iControl {
         this._isAnimating = false;
         this._isPaused = false;
 
+        this._trailEnabled = false;
+        this._trailDuration = 1000;
+        this._lastFadeTime = performance.now();
+
         // Initialize caches for coordinate conversion methods
         this._freqToXCache = new Map();
         this._xToFreqCache = new Map();
@@ -797,9 +801,16 @@ class iSpectrumChart extends iControl {
                 fillColor: 'rgba(33, 150, 243, 0.3)',
                 peakColor: '#FF5722',
                 showFill: true,
-                showPeak: true
+                showPeak: true,
+                trailEnabled: false,
+                trailDuration: 1000
             },
-            _needsUpdate: true // Add flag to indicate if spectrum needs redraw
+            _needsUpdate: true, // Add flag to indicate if spectrum needs redraw
+            _framebuffer: null,
+            _texture: null,
+            _rtWidth: 0,
+            _rtHeight: 0,
+            _lastFadeTime: performance.now()
         };
 
         // First spread the defaults, then spread the options to override if specified
@@ -1007,9 +1018,8 @@ class iSpectrumChart extends iControl {
         const width = this._spectrumCanvas.width;
         const height = this._spectrumCanvas.height;
 
-        // Clear WebGL canvas
-        gl.clear(gl.COLOR_BUFFER_BIT);
         gl.viewport(0, 0, width, height);
+        gl.clear(gl.COLOR_BUFFER_BIT);
 
         // Sort spectrums by z-index
         const sortedSpectrums = [...this._spectrumLayers.entries()]
@@ -1046,14 +1056,35 @@ class iSpectrumChart extends iControl {
             const scale = this._scales.get(spectrum.scaleId || 'default');
             const bottomY = this._dbToY(scale.minDb, spectrum.scaleId);
 
-            // Draw main spectrum using the cached points
-            // The points were prepared in the previous loop if needed
-            this._drawSpectrum(gl, spectrum._cachedPoints, startX, endX, bottomY, spectrum.preferences);
+            const trailEnabled = !!(spectrum.preferences && spectrum.preferences.trailEnabled);
+            const trailDuration = (spectrum.preferences && spectrum.preferences.trailDuration) || 1000;
 
-            // Draw peak hold if enabled (also uses cached peak points)
-            if (spectrum.isPeakHoldEnabled && spectrum.preferences.showPeak) {
-                // Peak points are updated in updateSpectrum, no separate preparation needed here
-                this._drawPeakHold(gl, spectrum.peakHoldData, spectrum.preferences);
+            if (trailEnabled) {
+                this._ensureRenderTargetForSpectrum(spectrum, width, height);
+                gl.bindFramebuffer(gl.FRAMEBUFFER, spectrum._framebuffer);
+                gl.viewport(0, 0, width, height);
+
+                const dt = Math.max(0, currentTime - (spectrum._lastFadeTime || currentTime));
+                const alpha = 1 - Math.exp(-dt / Math.max(1, trailDuration));
+                gl.enable(gl.BLEND);
+                gl.blendFuncSeparate(gl.ZERO, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE_MINUS_SRC_ALPHA);
+                this._applyTrailFade(alpha);
+                gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+                spectrum._lastFadeTime = currentTime;
+
+                this._drawSpectrum(gl, spectrum._cachedPoints, startX, endX, bottomY, spectrum.preferences);
+                if (spectrum.isPeakHoldEnabled && spectrum.preferences.showPeak) {
+                    this._drawPeakHold(gl, spectrum.peakHoldData, spectrum.preferences);
+                }
+
+                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                gl.viewport(0, 0, width, height);
+                this._blitTexture(spectrum._texture, width, height);
+            } else {
+                this._drawSpectrum(gl, spectrum._cachedPoints, startX, endX, bottomY, spectrum.preferences);
+                if (spectrum.isPeakHoldEnabled && spectrum.preferences.showPeak) {
+                    this._drawPeakHold(gl, spectrum.peakHoldData, spectrum.preferences);
+                }
             }
         }
 
@@ -1222,6 +1253,37 @@ class iSpectrumChart extends iControl {
         
         // Create buffers
         this._positionBuffer = gl.createBuffer();
+
+        const blitVs = `
+            attribute vec2 a_position;
+            attribute vec2 a_texcoord;
+            varying vec2 v_texcoord;
+            uniform vec2 u_resolution;
+            void main(){
+                vec2 zeroToOne = a_position / u_resolution;
+                vec2 zeroToTwo = zeroToOne * 2.0;
+                vec2 clipSpace = zeroToTwo - 1.0;
+                gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+                v_texcoord = a_texcoord;
+            }
+        `;
+        const blitFs = `
+            precision mediump float;
+            varying vec2 v_texcoord;
+            uniform sampler2D u_texture;
+            void main(){
+                gl_FragColor = texture2D(u_texture, v_texcoord);
+            }
+        `;
+        const blitVS = this._createShader(gl, gl.VERTEX_SHADER, blitVs);
+        const blitFS = this._createShader(gl, gl.FRAGMENT_SHADER, blitFs);
+        this._blitProgram = this._createProgram(gl, blitVS, blitFS);
+        this._blitPosLoc = gl.getAttribLocation(this._blitProgram, 'a_position');
+        this._blitTexLoc = gl.getAttribLocation(this._blitProgram, 'a_texcoord');
+        this._blitResLoc = gl.getUniformLocation(this._blitProgram, 'u_resolution');
+        this._blitSamplerLoc = gl.getUniformLocation(this._blitProgram, 'u_texture');
+        this._blitPosBuffer = gl.createBuffer();
+        this._blitTexBuffer = gl.createBuffer();
     }
     
     _createShader(gl, type, source) {
@@ -1317,6 +1379,93 @@ class iSpectrumChart extends iControl {
         gl.uniform4fv(this._colorLocation, new Float32Array(peakColor));
         
         gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
+    }
+    _applyTrailFade(alpha) {
+        const gl = this._spectrumCtx;
+        const w = gl.canvas.width;
+        const h = gl.canvas.height;
+        const vertices = new Float32Array([
+            0, 0,
+            w, 0,
+            0, h,
+            w, h
+        ]);
+        gl.useProgram(this._shaderProgram);
+        gl.enableVertexAttribArray(this._positionLocation);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+        gl.vertexAttribPointer(this._positionLocation, 2, gl.FLOAT, false, 0, 0);
+        gl.uniform2f(this._resolutionLocation, w, h);
+        gl.uniform4f(this._colorLocation, 0, 0, 0, Math.min(1, Math.max(0, alpha)));
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+
+    _createRenderTarget(gl, width, height) {
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+        const framebuffer = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        return { framebuffer, texture };
+    }
+
+    _ensureRenderTargetForSpectrum(spectrum, width, height) {
+        const gl = this._spectrumCtx;
+        if (!spectrum._framebuffer || spectrum._rtWidth !== width || spectrum._rtHeight !== height) {
+            if (spectrum._framebuffer) {
+                gl.deleteFramebuffer(spectrum._framebuffer);
+            }
+            if (spectrum._texture) {
+                gl.deleteTexture(spectrum._texture);
+            }
+            const rt = this._createRenderTarget(gl, width, height);
+            spectrum._framebuffer = rt.framebuffer;
+            spectrum._texture = rt.texture;
+            spectrum._rtWidth = width;
+            spectrum._rtHeight = height;
+            spectrum._lastFadeTime = performance.now();
+        }
+    }
+
+    _blitTexture(texture, width, height) {
+        const gl = this._spectrumCtx;
+        gl.useProgram(this._blitProgram);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._blitPosBuffer);
+        const positions = new Float32Array([
+            0, 0,
+            width, 0,
+            0, height,
+            width, height
+        ]);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(this._blitPosLoc);
+        gl.vertexAttribPointer(this._blitPosLoc, 2, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._blitTexBuffer);
+        const texcoords = new Float32Array([
+            0, 0,
+            1, 0,
+            0, 1,
+            1, 1
+        ]);
+        gl.bufferData(gl.ARRAY_BUFFER, texcoords, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(this._blitTexLoc);
+        gl.vertexAttribPointer(this._blitTexLoc, 2, gl.FLOAT, false, 0, 0);
+
+        gl.uniform2f(this._blitResLoc, width, height);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.uniform1i(this._blitSamplerLoc, 0);
+
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
     
     _prepareVertices(points, startX, endX, bottomY) {
@@ -1423,6 +1572,12 @@ class iSpectrumChart extends iControl {
         this._domElement.style.backgroundColor = this._preferences.background;
         if (preferences.decayTime) {
             this._decayTimeConstant = preferences.decayTime;
+        }
+        if (preferences.trailEnabled !== undefined) {
+            this._trailEnabled = !!preferences.trailEnabled;
+        }
+        if (preferences.trailDuration !== undefined) {
+            this._trailDuration = Math.max(1, Number(preferences.trailDuration) || 0);
         }
         if (preferences.text && preferences.text.color) {
             // Update color for all scales
@@ -1537,5 +1692,11 @@ class iSpectrumChart extends iControl {
         
         // Ensure the threshold is reasonable and more conservative
         return Math.max(-95, Math.min(-50, threshold));
+    }
+    setTrailEnabled(enabled) {
+        this._trailEnabled = !!enabled;
+    }
+    setTrailDuration(ms) {
+        this._trailDuration = Math.max(1, Number(ms) || 0);
     }
 }
