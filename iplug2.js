@@ -1,3 +1,67 @@
+if (typeof ResizeObserver === 'undefined') {
+  window.ResizeObserver = class ResizeObserver {
+    constructor(callback) {
+      this.callback = callback;
+      this.observedElements = [];
+      this.checkInterval = null;
+    }
+    observe(element) {
+      if (!element) return;
+      if (this.observedElements.some(item => item.element === element)) return;
+      this.observedElements.push({
+        element: element,
+        width: element.offsetWidth,
+        height: element.offsetHeight
+      });
+      if (!this.checkInterval) {
+        this.checkInterval = setInterval(() => this.checkForChanges(), 200);
+      }
+      this.checkForChanges(true);
+    }
+    unobserve(element) {
+      this.observedElements = this.observedElements.filter(item => item.element !== element);
+      if (this.observedElements.length === 0 && this.checkInterval) {
+        clearInterval(this.checkInterval);
+        this.checkInterval = null;
+      }
+    }
+    disconnect() {
+      this.observedElements = [];
+      if (this.checkInterval) {
+        clearInterval(this.checkInterval);
+        this.checkInterval = null;
+      }
+    }
+    checkForChanges(force = false) {
+      const entries = [];
+      this.observedElements.forEach(item => {
+        const newWidth = item.element.offsetWidth;
+        const newHeight = item.element.offsetHeight;
+        if (force || newWidth !== item.width || newHeight !== item.height) {
+          item.width = newWidth;
+          item.height = newHeight;
+          entries.push({
+            target: item.element,
+            contentRect: {
+              width: newWidth,
+              height: newHeight,
+              top: 0,
+              left: 0,
+              bottom: newHeight,
+              right: newWidth,
+              x: 0,
+              y: 0
+            }
+          });
+        }
+      });
+      if (entries.length > 0) {
+        this.callback(entries);
+      }
+    }
+  };
+}
+
 // parameters handling
 var parameters = [];
 
