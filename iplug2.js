@@ -79,7 +79,7 @@ var paramQueue = [];
 var setupReady = false;
 
 // Debug: sopprime i log in produzione
-const DEBUG = false;
+const DEBUG = true;
 function debugLog() {
   try {
     if ((typeof window !== 'undefined' && window.__DEBUG) || DEBUG) {
@@ -123,19 +123,24 @@ function SCMFD(ctrlTag, msgTag, msgSize, msg) {
 }
 
 function SAMFD(msgTag, dataSize, msg) {
-  let data = JSON.parse(window.atob(msg));
-  debugLog("SAMFD", data);
-  if (data["id"] == "params") {
-    SetupControls();
-    debugLog("params", data["params"]);
-    for( var i = 0; i < data["params"].length; i++) {
-      parameters.push(data["params"][i]);
-      var controls = GetControlByParamId(data["params"][i].id);
-      for (var c = 0; c < controls.length; c++) {
-          controls[c].setParamData(data["params"][i]);
+  try {
+    let data = JSON.parse(window.atob(msg));
+    debugLog("SAMFD", data);
+    if (data && data["id"] == "params") {
+      SetupControls();
+      debugLog("params", data["params"]);
+      for( var i = 0; i < data["params"].length; i++) {
+        parameters.push(data["params"][i]);
+        var controls = GetControlByParamId(data["params"][i].id);
+        for (var c = 0; c < controls.length; c++) {
+            controls[c].setParamData(data["params"][i]);
+        }
       }
     }
+  } catch (e) {
+    // Message is not JSON or not the params object, proceed
   }
+
   const event = new CustomEvent("ArbitraryMessage", {detail:{tag: msgTag, value: msg}});
   if(setupReady) {
     dispatchEvent(event);

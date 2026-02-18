@@ -679,6 +679,7 @@ class iSwitch extends iControl {
     super(options);
 
     this._domElement.addEventListener('click', event => {
+      event.stopPropagation();
       if(this._disabled == true) return;
       if (this._value == 0) {
         this.setValue(1);
