@@ -78,6 +78,146 @@ var paramQueue = [];
 
 var setupReady = false;
 
+function GetParameterInfo(paramIdx) {
+  for (var i = 0; i < parameters.length; i++) {
+    if(parameters[i].id == paramIdx) {
+        return parameters[i];
+    }
+  }
+  return null;
+}
+
+function AddControl(controlObj) {
+    // add control to controls array or update it if already present
+    for (var i = 0; i  < controls.length; i++) {
+        if(controls[i].getDomElement().id == controlObj.getDomElement().id) {
+            return;
+        }
+    }
+    controls.push(controlObj);
+}
+
+function GetControlByParamId(id) {
+  let retcontrols = [];
+  for(var i =0; i < controls.length; i++) {
+    if(controls[i].getParamIdx() == id) {
+      retcontrols.push(controls[i]);;
+    }
+  }
+  return retcontrols;
+}
+
+function GetControlById(id) {
+    for(var i =0; i < controls.length; i++) {
+        if(controls[i].getDomElement().id == id) {
+            return controls[i];
+        }
+    }
+    return null;
+}
+
+function GetControlByMessageId(id) {
+    let retcontrols = [];
+    for(var i =0; i < controls.length; i++) {
+        if(controls[i].getMessageIdx() == id) {
+            retcontrols.push(controls[i]);
+        }
+    }
+    return retcontrols;
+}
+
+function OnParamChange(paramIdx, val) {
+  for (var i = 0; i < controls.length; i++ ) {
+    if(controls[i] == -1) continue;
+    if(paramIdx == controls[i].getParamIdx()) {
+      if(controls[i].isCaptured() == false) {
+        controls[i].setInformHostOfParamChange(false);
+        controls[i].setValue(val, false);
+        controls[i].getDomElement().dispatchEvent(new Event("change"));
+        controls[i].setInformHostOfParamChange(true);
+      }
+    }
+  }
+}
+
+function SetupControls() {
+
+    if(controls.length > 0) return;
+    
+    // all the controls that should receive a message from the delegate
+    var domControls = document.querySelectorAll('[data-messageid]');
+    domControls.forEach(function(control){
+        switch(control.getAttribute('data-controltype')){
+            case 'segment-meter':
+                AddControl(new iSegmentMeter({
+                    "id":control.id,
+                    "minVal":control.getAttribute('data-minval'),
+                    "maxVal":control.getAttribute('data-maxval'),
+                    "zeroVal":control.getAttribute('data-zeroval'),
+                    "messageId":control.getAttribute("data-messageid")
+                }));
+                break;
+            
+            case 'vumeter':
+                AddControl(new iNeedleVUMeter({
+                    "id":control.id,
+                    "ticks":control.getAttribute('data-ticks'),
+                    "messageId":control.getAttribute("data-messageid")
+                }));
+                break;
+            case 'spectrum-chart':
+                // keep a reference to the chart in the document
+                document.chart = new iSpectrumChart({
+                  "id":control.id,
+                  "minDb":control.getAttribute('data-mindb'),
+                  "maxDb":control.getAttribute('data-maxdb'),
+                  "decayTime":control.getAttribute('data-decaytime'),
+                  "messageId":control.getAttribute("data-messageid")
+                });
+                AddControl(document.chart);
+                break;
+        }
+    });
+    // now attach all the controls linked to a parameter id
+    var domControls2 = document.querySelectorAll('[data-paramid]');
+    domControls2.forEach(function(control){
+  
+        var paramData = {
+                        "id":control.getAttribute("data-paramid"),
+                        "min":control.getAttribute("data-min"),
+                        "max":control.getAttribute("data-max"),
+                        "default":control.getAttribute("data-default"),
+                        "step":control.getAttribute("data-step"),
+                        "displayType":control.getAttribute("data-displaytype"),
+                        "label":control.getAttribute("data-label")
+                    }; 
+  
+        switch(control.getAttribute('data-controltype')) {
+            case "knob":
+                AddControl( new iRotatingKnob({"id": control.id, "inputValueId": control.id+"-val", "paramData":paramData}));
+                break;
+            case "vertical-fader":
+                AddControl( new iVerticalFader({"id": control.id, "inputValueId": control.id+"-val", "paramData":paramData}));
+                break;
+            case "switch":
+                AddControl( new iSwitch({"id": control.id, "paramData":paramData}));
+                break;
+            case "radio":
+                AddControl( new iRadio({"id": control.id, "paramData":paramData}));
+                break;   
+            case "draggable-input":
+                AddControl( new iDraggableInput({"id": control.id, "paramData":paramData}, paramData.id));
+                break;
+            case "select":
+                AddControl( new iSelect({"id": control.id, "paramData":paramData}, paramData.id));
+                break;
+        }
+    });
+ 
+  const event = new CustomEvent("ControlSetup", {});
+  dispatchEvent(event);
+}
+
 // Debug: sopprime i log in produzione
 const DEBUG = false;
 function debugLog() {
@@ -123,9 +263,14 @@ function SCMFD(ctrlTag, msgTag, msgSize, msg) {
 }
 
 function SAMFD(msgTag, dataSize, msg) {
-  let data = JSON.parse(window.atob(msg));
+  let data = null;
+  try {
+    data = JSON.parse(window.atob(msg));
+  } catch (e) {
+    // Not JSON, assume binary data
+  }
   debugLog("SAMFD", data);
-  if (data["id"] == "params") {
+  if (data && data["id"] == "params") {
     SetupControls();
     debugLog("params", data["params"]);
     for( var i = 0; i < data["params"].length; i++) {
@@ -134,6 +279,17 @@ function SAMFD(msgTag, dataSize, msg) {
       for (var c = 0; c < controls.length; c++) {
           controls[c].setParamData(data["params"][i]);
       }
+    }
+    
+    setupReady = true;
+    
+    // Process queued events
+    while(paramQueue.length > 0) {
+      let p = paramQueue.shift();
+      OnParamChange(p[0], p[1]);
+    }
+    while(eventQueue.length > 0) {
+      dispatchEvent(eventQueue.shift());
     }
   }
   const event = new CustomEvent("ArbitraryMessage", {detail:{tag: msgTag, value: msg}});
@@ -153,6 +309,17 @@ function SSMFD(offset, size, msg) {
 }
 
 // FROM UI
+function SPVFUI(paramIdx, value) {
+  var message = {
+    "msg": "SPVFUI",
+    "paramIdx": paramIdx,
+    "value": value
+  };
+  if(typeof IPlugSendMsg === 'function') {
+    IPlugSendMsg(message);
+  }
+}
+
 // data should be a base64 encoded string
 function SAMFUI(msgTag, ctrlTag = -1, data = 0) {
   debugLog("SAMFUI data:", data);
@@ -198,211 +365,62 @@ function EPCFUI(paramIdx) {
     "msg": "EPCFUI",
     "paramIdx": paramIdx,
   };
-  // this allow us to develop working controls even outside of the webview environment
   if(typeof IPlugSendMsg === 'function') {
     IPlugSendMsg(message);
   }
 }
 
-function BPCFUI(paramIdx) {
+function CTXMFUI(paramIdx, x, y, dpr, ctrlTag = -1) {
   var message = {
-    "msg": "BPCFUI",
+    "msg": "CTXMFUI",
     "paramIdx": paramIdx,
+    "x": x,
+    "y": y,
+    "dpr": dpr,
+    "ctrlTag": ctrlTag
   };
-  // this allow us to develop working controls even outside of the webview environment
   if(typeof IPlugSendMsg === 'function') {
     IPlugSendMsg(message);
   }
 }
 
-function SPVFUI(paramIdx, value) {
-  if (value == null) return;
-  var message = {
-    "msg": "SPVFUI",
-    "paramIdx": paramIdx,
-    "value": value
-  };
-  // this allow us to develop working controls even outside of the webview environment
-  if(typeof IPlugSendMsg === 'function') {
-    IPlugSendMsg(message);
-  }
-}
-
-function GetParameterInfo(paramIdx) {
-  for (var i = 0; i < parameters.length; i++) {
-    if(parameters[i].id == paramIdx) {
-        return parameters[i];
-    }
-  }
-  return null;
-}
-
-function AddControl(controlObj) {
-    controls.push(controlObj);
-}
-
-function GetControlByParamId(id) {
-  let retcontrols = [];
-  for(var i =0; i < controls.length; i++) {
-    if(controls[i].getParamIdx() == id) {
-      retcontrols.push(controls[i]);
-    }
-  }
-  return retcontrols;
-}
-
-function GetControlByMessageId(id) {
-    let retcontrols = [];
-    for(var i =0; i < controls.length; i++) {
-        if(controls[i].getMessageIdx() == id) {
-            retcontrols.push(controls[i]);
-        }
-    }
-    return retcontrols;
-}
-
-function GetControlById(id) {
-    let retcontrols = [];
-    for(var i =0; i < controls.length; i++) {
-        if(controls[i].getDomElement().id == id) {
-          retcontrols.push(controls[i]);
-        }
-    }
-    if(retcontrols.length == 1) {
-        return retcontrols[0];
-    } else if(retcontrols.length > 1) {
-        return retcontrols;
-    }
-}
-
-function OnParamChange(paramIdx, val) {
-  for (var i = 0; i < controls.length; i++ ) {
-    if(controls[i] == -1) continue;
-    if(paramIdx == controls[i].getParamIdx()) {
-      if(controls[i].isCaptured() == false) {
-        controls[i].setInformHostOfParamChange(false);
-        controls[i].setValue(val, false);
-        controls[i].setInformHostOfParamChange(true);
+document.addEventListener('contextmenu', function(event) {
+  var target = event.target;
+  var paramIdx = -1;
+  var current = target;
+  while(current && current !== document) {
+    if (current.getAttribute('data-vst3-contextmenu') === "0") return;
+    if (current._iControlInstance) {
+      if(typeof current._iControlInstance.getParamIdx === 'function') {
+        paramIdx = current._iControlInstance.getParamIdx();
       }
+      break;
     }
+    if (current.hasAttribute('data-paramid')) {
+      paramIdx = parseInt(current.getAttribute('data-paramid'));
+      break;
+    }
+    current = current.parentNode;
   }
-}
+  
+  if (paramIdx >= 0) {
+            event.preventDefault();
+            var rect = document.documentElement.getBoundingClientRect();
+            var dpr = window.devicePixelRatio || 1;
+            var x = (event.clientX - rect.left);
+            var y = (event.clientY - rect.top);
+            // console.log("Right click on param " + paramIdx + " at " + x + "," + y);
+            CTXMFUI(paramIdx, x, y, dpr);
+          }
+});
 
-function SetupControls() {
-    if(controls.length > 0) return;
-    
-    // all the controls that should receive a message from the delegate
-    var pcontrols = document.querySelectorAll('[data-messageid]');
-    pcontrols.forEach(function(control){
-        
-        switch(control.getAttribute('data-controltype')){
-            case 'segment-meter':
-                AddControl(new iSegmentMeter({
-                    "id":control.id,
-                    "minVal":control.getAttribute('data-minval'),
-                    "maxVal":control.getAttribute('data-maxval'),
-                    "zeroVal":control.getAttribute('data-zeroval'),
-                    "decayTime":control.getAttribute('data-decaytime'),
-                    "peakHold":control.getAttribute('data-peakhold'),
-                    "messageId":control.getAttribute("data-messageid"),
-                }));
-                break;
-            
-            case 'vumeter':
-                AddControl(new iNeedleVUMeter({
-                    "id":control.id,
-                    "ticks":control.getAttribute('data-ticks'),
-                    "messageId":control.getAttribute("data-messageid"),
-                    "shape": control.getAttribute('data-shape'),
-                    "redifabove": control.getAttribute('data-redifabove'),
-                }));
-                break;
-            case 'spectrum-chart':
-                AddControl(new iSpectrumChart({
-                    "id": control.id,
-                    "minDb": control.getAttribute('data-mindb'),
-                    "maxDb": control.getAttribute('data-maxdb'),
-                    "messageId": control.getAttribute("data-messageid")
-                }));
-                break;
-            
-            default:
-                var controlname = "new i"+control.getAttribute('data-controltype')+'({"id": control.id, "paramData":paramData}, paramData.id)';
-                debugLog(controlname);
-                AddControl( eval(controlname) );
-                break;
-        }
-    });
-    // now attach all the controls linked to a parameter id
-    var pcontrols = document.querySelectorAll('[data-paramid]');
-    pcontrols.forEach(function(control){
-  
-        var paramData = {
-                        "id":control.getAttribute("data-paramid"),
-                        "min":control.getAttribute("data-min"),
-                        "max":control.getAttribute("data-max"),
-                        "default":control.getAttribute("data-default"),
-                        "step":control.getAttribute("data-step"),
-                        "displayType":control.getAttribute("data-displaytype"),
-                        "label":control.getAttribute("data-label")
-                    }; 
-  
-        switch(control.getAttribute('data-controltype')) {
-            case "knob":
-                AddControl( new iRotatingKnob({"id": control.id, "inputValueId": control.id+"-val", "paramData":paramData}));
-                break;
-            case "vertical-fader":
-                AddControl( new iVerticalFader({"id": control.id, "inputValueId": control.id+"-val", "paramData":paramData}));
-                break;
-            case "switch":
-                AddControl( new iSwitch({"id": control.id, "paramData":paramData}));
-                break;
-            case "button":
-                AddControl( new iButton({"id": control.id, "paramData":paramData}));
-                break;
-            case "draggable-input":
-                AddControl( new iDraggableInput({"id": control.id, "paramData":paramData}, paramData.id));
-                break;
-            case "select":
-                AddControl( new iSelect({"id": control.id, "paramData":paramData}, paramData.id));
-                break;
-            case "radio":
-                AddControl( new iRadio({"id": control.id, "paramData":paramData}, paramData.id));
-                break;
-            default:
-                var controlname = "new i"+control.getAttribute('data-controltype')+'({"id": control.id, "paramData":paramData}, paramData.id)';
-                debugLog(controlname);
-                AddControl( eval(controlname) );
-                break;
-        }
-    });
- 
-  const event = new CustomEvent("ControlSetup", {});
-  
-  addEventListener("ControlSetup", (event) => {
-    setTimeout(function() {
-      setupReady = true;
-      for (var i = 0; i < eventQueue.length; i++) {
-        dispatchEvent(eventQueue[i]);
-      }
-      
-      for (var i = 0; i < paramQueue.length; i++) {
-        OnParamChange(paramQueue[i][0], paramQueue[i][1]);
-      }
-      
-      eventQueue = [];
-      paramQueue = [];
-      
-      
-      addEventListener('ControlChange', (event)=> {
-        GetControlByMessageId(event.detail.tag).forEach(function(elem){
-          elem.setValue(event.detail.value);
-        });
-      });
-      
-    },0);
+// Send JSREADY message when DOM is loaded
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', function() {
+    var message = { "msg": "JSREADY" };
+    if(typeof IPlugSendMsg === 'function') IPlugSendMsg(message);
   });
-  
-  dispatchEvent(event);
-  
+} else {
+  var message = { "msg": "JSREADY" };
+  if(typeof IPlugSendMsg === 'function') IPlugSendMsg(message);
 }

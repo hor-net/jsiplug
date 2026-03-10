@@ -131,6 +131,40 @@ class iSpectrumChart extends iControl {
         this._setupTooltip();
     }
 
+    updateData(data) {
+        // Implementation depends on how data is expected. 
+        // Assuming data is an array of dB values or magnitudes.
+        // For now, let's assume it matches what _drawSpectrum expects or we store it.
+        // Looking at _downsampleData, it takes 'data'.
+        
+        // We need to update the spectrum layers.
+        // Since we don't know the layer ID from the message (unless we encode it),
+        // let's assume we update a default layer or create one.
+        
+        // Actually, looking at the code, _spectrumLayers is a Map.
+        // If we just want to show *something*, let's put it in a default layer.
+        
+        const layerId = "main";
+        if (!this._spectrumLayers.has(layerId)) {
+             this._spectrumLayers.set(layerId, {
+                 data: new Float32Array(data.length),
+                 peakHoldData: new Float32Array(data.length).fill(-Infinity),
+                 color: this._preferences.spectrum.lineColor,
+                 fillColor: this._preferences.spectrum.fillColor
+             });
+        }
+        
+        const layer = this._spectrumLayers.get(layerId);
+        // Copy data
+        if (layer.data.length !== data.length) {
+            layer.data = new Float32Array(data);
+            layer.peakHoldData = new Float32Array(data.length).fill(-Infinity);
+        } else {
+            layer.data.set(data);
+        }
+    }
+
+
     _downsampleData(data, frequencies, targetSize) {
         const N = data.length;
         if (N <= targetSize) {
@@ -1314,7 +1348,8 @@ class iSpectrumChart extends iControl {
     
     // Replace the existing _drawSpectrum method
     _drawSpectrum(ctx, points, startX, endX, bottomY, preferences) {
-        
+        if (!preferences) return;
+
         const gl = ctx;
         // Set up WebGL state
         gl.useProgram(this._shaderProgram);
@@ -1326,7 +1361,7 @@ class iSpectrumChart extends iControl {
         gl.uniform2f(this._resolutionLocation, gl.canvas.width, gl.canvas.height);
         
         // Draw fill if enabled
-        if (preferences.showFill) {
+        if (preferences && preferences.showFill) {
             // Reset WebGL state for fill
             gl.enable(gl.BLEND);
             gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);

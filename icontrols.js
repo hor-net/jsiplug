@@ -652,6 +652,18 @@ class iRotatingKnob extends iDraggable {
     }
 
     this.setValue(this._value);
+    
+    // Explicitly add wheel listener for knobs to ensure it works
+    this._domElement.removeEventListener("wheel", this.handleWheel);
+
+    this.handleKnobWheel = (event) => {
+        if(this._disabled == true) return;
+        event.preventDefault();
+        let delta = -(event.deltaY / 100) * 0.05 / this._gearing;
+        this.setValue(this._value + delta);
+    };
+
+    this._domElement.addEventListener("wheel", this.handleKnobWheel, { passive: false });
   }
 
   updateKnob() {
@@ -785,20 +797,52 @@ class iRadio extends iControl {
   constructor(options) {
     super(options);
 
-    this._domElement.addEventListener("click", event => {
-      if(this._disabled == true) return;
-      document.activeElement.blur();
-      this.setValue(this.toNormalized(event.currentTarget.value));
-    });
+    var radios = [];
+    if (this._domElement.name) {
+      radios = document.getElementsByName(this._domElement.name);
+    } else {
+      radios = [this._domElement];
+    }
+
+    for (var i = 0; i < radios.length; i++) {
+      radios[i]._iControlInstance = this;
+      
+      // Attach instance to associated label if present
+      if (radios[i].id) {
+        var label = document.querySelector('label[for="' + radios[i].id + '"]');
+        if (label) {
+            label._iControlInstance = this;
+        }
+      }
+      // Also check if parent is a label (implicit association)
+      if (radios[i].parentElement && radios[i].parentElement.tagName === "LABEL") {
+          radios[i].parentElement._iControlInstance = this;
+      }
+
+      radios[i].addEventListener("click", event => {
+        if(this._disabled == true) return;
+        document.activeElement.blur();
+        this.setValue(this.toNormalized(event.currentTarget.value));
+      });
+    }
   }
 
   setValue(value) {
     super.setValue(value);
-    var nroptions = document.getElementsByName(this._domElement.name);
-    if (this._domElement.value == this.fromNormalized(value)) {
-      this._domElement.checked = true;
+    var targetValue = this.fromNormalized(value);
+    var radios = [];
+    if (this._domElement.name) {
+      radios = document.getElementsByName(this._domElement.name);
     } else {
-      this._domElement.checked = false;
+      radios = [this._domElement];
+    }
+    
+    for (var i = 0; i < radios.length; i++) {
+      if (radios[i].value == targetValue) {
+        radios[i].checked = true;
+      } else {
+        radios[i].checked = false;
+      }
     }
   }
 }
