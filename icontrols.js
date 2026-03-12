@@ -627,6 +627,11 @@ class iRotatingKnob extends iDraggable {
     this._inputValue = document.getElementById(options.inputValueId);
     if (this._inputValue) {
       if (this._inputValue.nodeName === "SELECT") {
+        // Per i knob associati a SELECT (valori discreti) disabilita la soglia di coalescing
+        // per rendere il drag immediato anche con pochi passi disponibili
+        this._dragThresholdFactor = 0;
+        // Aumenta la sensibilità del drag per selezioni a pochi step
+        this._gearing = 1;
         this._inputValue.addEventListener("change", event => {
           if(this._disabled == true) return;
           this.setValue(this.toNormalized(this._inputValue.value)); 
@@ -1134,8 +1139,7 @@ class iNeedleVUMeter extends iControl {
     super(options);
     // append the basic svg
     this._domElement.innerHTML = `<svg id="${options.id}-svg" viewBox="0 0 400 220" preserveAspectRatio="xMidYMid meet" fill="none">
-            <g class="scaleGroup" transform="translate(60, 50) scale(0.7,1)">
-                <!-- Define tick lines and labels here -->
+            <g class="scaleGroup" transform="translate(0, 0)">
             </g>
             <g class="needleGroup" transform="translate(200, 220) scale(-1,-1)">
                 <line class="needleLine" x1="0" y1="0" x2="0" y2="200" stroke="black" stroke-width="4"></line>
@@ -1146,7 +1150,7 @@ class iNeedleVUMeter extends iControl {
     let svg = document.getElementById(options.id + "-svg");
     this._scaleGroup = svg.querySelector(".scaleGroup");
     this._needleGroup = svg.querySelector(".needleGroup");
-    this._needleLine = svg.querySelector("needleLine");
+    this._needleLine = svg.querySelector(".needleLine");
 
     this._ticks = [-20, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3];
     //this._ticks = [0, 4, 8, 12, 16, 20];
@@ -1162,19 +1166,7 @@ class iNeedleVUMeter extends iControl {
       }
     }
 
-    if (options.shape) {
-      switch (options.shape) {
-        case "log":
-          this._x = "log";
-          break;
-        case "lin":
-          this._x = "lin"
-          break;
-        default:
-          this._x = "log"
-      }
-
-    }
+    this._shape = (options.shape && options.shape.toLowerCase() === 'lin') ? 'lin' : 'log';
 
     if (options.redifabove) {
       this._redifabove = parseInt(options.redifabove)
@@ -1187,8 +1179,8 @@ class iNeedleVUMeter extends iControl {
 
     this._width = 400; // Set a fixed width for the viewBox
     this._height = 220; // Set a fixed height for the viewBox
-    this._tickLength = 10; // Length of tick lines
-    this._textOffset = 30; // Offset for text labels
+    this._tickLength = 20; // Length of tick lines
+    this._textOffset = 35; // Offset for text labels
 
     this._center = {
       x: this._width / 2,
@@ -1208,34 +1200,31 @@ class iNeedleVUMeter extends iControl {
   drawScale() {
 
     var x = 0;
+    var minX = 70;
+    var maxX = 330;
+    var spanX = maxX - minX;
 
     this._ticks.forEach((inDb) => {
 
-
-
-      switch (this._x) {
+      switch (this._shape) {
         case "log":
           x = Math.exp(Math.log(1.055) * 2.1 * inDb) * this._width / 1.5;
           break;
         case "lin":
-          //x = (3 * inDb + 1) * this._width / 64
-          x = 250 + (3 * inDb + 1) * this._width / 200
+          x = minX + ((inDb - this._minVal) / (this._maxVal - this._minVal)) * spanX;
           break;
         default:
           x = Math.exp(Math.log(1.055) * 2.1 * inDb) * this._width / 1.5;
       }
-      console.log("x: " + x);
-
-
 
       //const x = Math.exp(Math.log(1.055) * 2.1 * inDb) * this._width / 1.5;
 
       // Draw tick line
       const tickLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
       tickLine.setAttribute("x1", x);
-      tickLine.setAttribute("y1", 10);
+      tickLine.setAttribute("y1", 40);
       tickLine.setAttribute("x2", x);
-      tickLine.setAttribute("y2", 10 + this._tickLength);
+      tickLine.setAttribute("y2", 40 + this._tickLength);
       tickLine.setAttribute("stroke", "black");
       tickLine.setAttribute("stroke-width", "4");
       tickLine.setAttribute("class", "tick");
@@ -1249,7 +1238,7 @@ class iNeedleVUMeter extends iControl {
       // Draw label below the tick
       const textLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
       textLabel.setAttribute("x", x);
-      textLabel.setAttribute("y", 10 + this._tickLength + this._textOffset);
+      textLabel.setAttribute("y", 40 + this._tickLength + this._textOffset);
       textLabel.setAttribute("font-family", "Arial");
       textLabel.setAttribute("font-size", "22");
       textLabel.setAttribute("text-anchor", "middle");
@@ -1295,21 +1284,23 @@ class iNeedleVUMeter extends iControl {
     // let x = Math.exp(Math.log(1.055) * 2.1 * level) * this._width / 1.5;
 
     let x;
+    var minX = 70;
+    var maxX = 330;
+    var spanX = maxX - minX;
 
-    switch (this._x) {
+    switch (this._shape) {
       case "log":
         x = Math.exp(Math.log(1.055) * 2.1 * level) * this._width / 1.5;
         break;
       case "lin":
-        //x = (3 * level + 1) * this._width / 64
-        x = 250 + (3 * level + 1) * this._width / 200
+        x = minX + ((level - this._minVal) / (this._maxVal - this._minVal)) * spanX;
         break;
       default:
         x = Math.exp(Math.log(1.055) * 2.1 * level) * this._width / 1.5;
     }
 
     x = x - this._center.x;
-    let angle = Math.atan(x / this._height);
+    let angle = Math.asin(x / 200);
 
     // Update the needle's rotation
     this._needleGroup.setAttribute("transform", `translate(${this._center.x}, ${this._center.y}) scale(-1,-1) rotate(${angle * (180 / Math.PI)})`);

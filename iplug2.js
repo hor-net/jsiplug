@@ -160,9 +160,11 @@ function SetupControls() {
             
             case 'vumeter':
                 AddControl(new iNeedleVUMeter({
-                    "id":control.id,
-                    "ticks":control.getAttribute('data-ticks'),
-                    "messageId":control.getAttribute("data-messageid")
+                    "id": control.id,
+                    "ticks": control.getAttribute('data-ticks'),
+                    "shape": control.getAttribute('data-shape'),
+                    "redifabove": control.getAttribute('data-redifabove'),
+                    "messageId": control.getAttribute("data-messageid")
                 }));
                 break;
             case 'spectrum-chart':
