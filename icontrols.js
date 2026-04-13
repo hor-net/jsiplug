@@ -74,11 +74,12 @@ class iControl {
       this._minVal = Number(options.paramData.min);
       this._maxVal = Number(options.paramData.max);
       this._defaultVal = Number(options.paramData.default);
-      this._value = this._defaultVal;
       // Step sicuro: evita Infinity/NaN se step è 0 o non numerico
       const stepRaw = Number(options.paramData.step);
+      this._stepRaw = (isFinite(stepRaw) && stepRaw > 0) ? stepRaw : 0;
       this._step = (isFinite(stepRaw) && stepRaw > 0) ? (1 / stepRaw) : 1;
       this._displayType = Number(options.paramData.displayType);
+      this._value = this.toNormalized(this._defaultVal);
       this._label = options.paramData.label;
     }
     if (options.value)
@@ -293,9 +294,9 @@ class iControl {
 
   setParamData(paramData) {
     this._paramData = paramData;
-    this._minVal = paramData.min;
-    this._maxVal = paramData.max;
-    this._defaultVal = paramData.default;
+    this._minVal = Number(paramData.min);
+    this._maxVal = Number(paramData.max);
+    this._defaultVal = Number(paramData.default);
     const stepRaw = Number(paramData.step);
     this._stepRaw = (isFinite(stepRaw) && stepRaw > 0) ? stepRaw : 0;
     this._step = (isFinite(stepRaw) && stepRaw > 0) ? (1 / stepRaw) : 1;
@@ -1112,14 +1113,14 @@ class iDraggableInput extends iDraggable {
   setValue(value) {
     if (this._domElement.min) {
       var normvalue = this.fromNormalized(value);
-      if (normvalue < this._domElement.min) {
-        value = this.toNormalized(this._domElement.min);
+      if (normvalue < Number(this._domElement.min)) {
+        value = this.toNormalized(Number(this._domElement.min));
       }
     }
     if (this._domElement.max) {
       var normvalue = this.fromNormalized(value);
-      if (normvalue > this._domElement.max) {
-        value = this.toNormalized(this._domElement.max);
+      if (normvalue > Number(this._domElement.max)) {
+        value = this.toNormalized(Number(this._domElement.max));
       }
     }
     super.setValue(value);
