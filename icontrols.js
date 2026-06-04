@@ -303,6 +303,18 @@ class iControl {
     this._displayType = paramData.displayType;
     this._label = paramData.label;
   }
+
+  setDefault(defaultValue) {
+    this._defaultVal = defaultValue;
+  }
+
+  getDefault() {
+    return this._defaultVal;
+  }
+
+  redraw() {
+    this._changeCallback(this.fromNormalized(this._value));
+  }
 }
 
 /**
