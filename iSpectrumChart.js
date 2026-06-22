@@ -89,7 +89,8 @@ class iSpectrumChart extends iControl {
             minDb: this._minDb,
             maxDb: this._maxDb,
             position: 'left',
-            color: this._preferences.text.color
+            color: this._preferences.text.color,
+            explicitColor: false
         });
 
         this._setupPixelRatioListener();
@@ -175,8 +176,10 @@ class iSpectrumChart extends iControl {
         const downsampledData = new Float32Array(targetSize);
         const downsampledFrequencies = new Float32Array(targetSize); // Always create frequencies array
 
-        // Define a minimum threshold to avoid spurious peaks from noise floor
-        const minThreshold = -100; // dB - adjust this value as needed
+        // Define a minimum threshold to avoid spurious peaks from noise floor.
+        // Usa il fondo scala della chart in modo che fill/line non vengano
+        // "tagliati" prima del limite visibile (es. -120 dB).
+        const minThreshold = (this._minDb !== undefined) ? this._minDb : -120;
         
         for (let i = 0; i < targetSize; i++) {
             // Calculate the range of original indices that map to this target index
@@ -322,9 +325,10 @@ class iSpectrumChart extends iControl {
         Object.assign(this._gridCanvas.style, canvasStyle);
         Object.assign(this._spectrumCanvas.style, canvasStyle);
         
-        // Set container position to relative for absolute positioning of canvases
         this._domElement.style.position = 'relative';
         this._domElement.style.backgroundColor = this._preferences.background;
+        this._gridCanvas.style.backgroundColor = 'transparent';
+        this._spectrumCanvas.style.backgroundColor = 'transparent';
         
         // Add canvases to DOM
         this._domElement.appendChild(this._gridCanvas);
@@ -443,16 +447,22 @@ class iSpectrumChart extends iControl {
             maxDb: 0,
             position: 'right',
             color: this._preferences.text.color,
-            scaleId: id
+            scaleId: id,
+            explicitColor: false
         };
-        
-        this._scales.set(id, { ...defaultScale, ...options });
+
+        const hasColor = Object.prototype.hasOwnProperty.call(options, 'color');
+        const scale = { ...defaultScale, ...options, explicitColor: hasColor };
+        this._scales.set(id, scale);
         this._updateCanvasSize(); // Recalculate padding for new scale
     } 
 
     setMindB(mindB, scaleId = 'default') {
         const scale = this._scales.get(scaleId) || this._scales.get('default');
         scale.minDb = mindB;
+        if (scaleId === 'default') {
+            this._minDb = mindB;
+        }
         this._updateCanvasSize(); // Recalculate padding for new scale   
     }
 
@@ -525,12 +535,11 @@ class iSpectrumChart extends iControl {
     _applyTilt(db, freq, spectrumId = null) {
         const tilt = this._getTilt(spectrumId);
         if (tilt === 0) return db; // No tilt
-        
-        // Calculate how many octaves from the minimum frequency
-        const octavesFromMin = Math.log2(freq / this._minFreq);
-        
-        // Apply the tilt (dB/octave * number of octaves)
-        return db + (tilt * octavesFromMin);
+
+        const pivotHz = 1000;
+        const safeFreq = Math.max(1e-9, freq);
+        const octavesFromPivot = Math.log2(safeFreq / pivotHz);
+        return db + (tilt * octavesFromPivot);
     }
 
     _yToDb(y, scaleId = 'default') {
@@ -791,9 +800,9 @@ class iSpectrumChart extends iControl {
 
         if (!this._isAnimating) return;
 
-        // If paused, continue the animation loop but don't draw
+        // Freeze the chart completely while paused.
         if (this._isPaused) {
-            requestAnimationFrame(() => this._animate());
+            this._isAnimating = false;
             return;
         }
 
@@ -817,6 +826,9 @@ class iSpectrumChart extends iControl {
      */
     pause(isPaused) {
         this._isPaused = isPaused;
+        if (!isPaused) {
+            this._startAnimation();
+        }
     }
 
     // Add new methods for spectrum management
@@ -921,33 +933,12 @@ class iSpectrumChart extends iControl {
             freqs = spectrum._cachedFreqs;
         }
 
-        // Calculate frequency-dependent noise floor thresholds for smoother tilt application
-        const baseNoiseFloor = this._calculateNoiseFloorThreshold(downsampledData);
-        
         // Apply tilt and update peak/decay in a single loop (use downsampled data)
         for (let i = 0; i < N; ++i) {
             const freq = freqs[i];
-            // Inline _applyTilt for performance
-            const tilt = this._getTilt(id);
             let db = downsampledData[i];
-            
-            // Apply tilt with smooth transition based on signal strength
-            if (tilt !== 0) {
-                const octavesFromMin = Math.log2(freq / this._minFreq);
-                
-                // Calculate frequency-dependent noise floor threshold
-                // Higher frequencies typically have higher noise floors
-                const freqFactor = Math.min(1.0, freq / 1000); // Normalize to 1kHz
-                const adaptiveThreshold = baseNoiseFloor + (freqFactor * 8); // Up to 8dB higher for high freq
-                
-                // Calculate smooth tilt factor (0 to 1) based on how much signal is above noise
-                const signalAboveNoise = Math.max(0, db - adaptiveThreshold);
-                const maxSignalRange = 20; // dB range for full tilt application
-                const tiltFactor = Math.min(1.0, signalAboveNoise / maxSignalRange);
-                
-                // Apply tilt with smooth transition
-                db += tilt * octavesFromMin * tiltFactor;
-            }
+
+            db = this._applyTilt(db, freq, id);
             tiltedData[i] = db;
 
             // Peak hold update
@@ -1207,10 +1198,13 @@ class iSpectrumChart extends iControl {
                 const startValue = (spectrum.decayData[i].startValue !== undefined && spectrum.decayData[i].startValue !== null)
                     ? spectrum.decayData[i].startValue
                     : spectrum.decayData[i].value;
+                const decayFloor = (spectrum.decayFloor !== undefined && spectrum.decayFloor !== null)
+                    ? spectrum.decayFloor
+                    : scale.minDb;
                 if (elapsed < this._decayTimeConstant) {
-                    spectrum.decayData[i].value = startValue + (scale.minDb - startValue) * (elapsed / this._decayTimeConstant);
+                    spectrum.decayData[i].value = startValue + (decayFloor - startValue) * (elapsed / this._decayTimeConstant);
                 } else {
-                    spectrum.decayData[i].value = scale.minDb;
+                    spectrum.decayData[i].value = decayFloor;
                 }
             }
             const dbValue = spectrum.decayData[i].value;
@@ -1615,9 +1609,19 @@ class iSpectrumChart extends iControl {
             this._trailDuration = Math.max(1, Number(preferences.trailDuration) || 0);
         }
         if (preferences.text && preferences.text.color) {
-            // Update color for all scales
-            for (const [scaleId, scale] of this._scales) {
-                scale.color = this._preferences.text.color;
+            for (const [, scale] of this._scales) {
+                if (!scale.explicitColor) {
+                    scale.color = this._preferences.text.color;
+                }
+            }
+        }
+        if (preferences.grid || preferences.text || preferences.background) {
+            this._freqToXCache.clear();
+            this._xToFreqCache.clear();
+            this._dbToYCache.clear();
+            this._drawGrid();
+            if (!this._isAnimating) {
+                this._drawFrame();
             }
         }
         // Handle spectrum-specific preferences

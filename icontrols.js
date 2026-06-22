@@ -914,6 +914,14 @@ class iSegmentMeter extends iControl {
     if (options.nrSegments) {
       this._nrSegments = options.nrSegments;
     }
+    
+    this._bidirectional = false;
+    try {
+      const bidirectionalAttr = this._domElement.getAttribute('data-bidirectional');
+      if (bidirectionalAttr === '1' || bidirectionalAttr === 'true') {
+        this._bidirectional = true;
+      }
+    } catch (_) {}
 
     // Add properties for requestAnimationFrame
     this._needsUpdate = false;
@@ -941,9 +949,12 @@ class iSegmentMeter extends iControl {
     value = Math.floor(value);
     //if(value < this._minVal) value = this._minVal;
 
-    if(this._decayTime == 0) {
+    if (this._decayTime == 0 || this._bidirectional) {
       this._value = value;
+      this._peakVal = value;
       this._maxVal = value;
+      this.scheduleUpdate();
+      return;
     }
 
     // we don't call our super here because we
