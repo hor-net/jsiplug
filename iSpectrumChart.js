@@ -780,7 +780,7 @@ class iSpectrumChart extends iControl {
             const freq = freqs[i];
             // Inline _applyTilt for performance
             const tilt = this._getTilt(id);
-            let db = data[i];
+            let db = downsampledData[i];
             if (tilt !== 0) {
                 const octavesFromMin = Math.log2(freq / this._minFreq);
                 db += tilt * octavesFromMin;
