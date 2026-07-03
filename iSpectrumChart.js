@@ -776,12 +776,13 @@ class iSpectrumChart extends iControl {
         }
 
         // Apply tilt and update peak/decay in a single loop (use downsampled data)
+        // Keep the analyzer baseline flat when there is no signal: the tilt only affects
+        // bins that rise above the floor, so silence does not become a diagonal line.
         for (let i = 0; i < N; ++i) {
             const freq = freqs[i];
-            // Inline _applyTilt for performance
             const tilt = this._getTilt(id);
             let db = downsampledData[i];
-            if (tilt !== 0) {
+            if (tilt !== 0 && db > this._minDb) {
                 const octavesFromMin = Math.log2(freq / this._minFreq);
                 db += tilt * octavesFromMin;
             }
