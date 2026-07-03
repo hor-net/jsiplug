@@ -302,6 +302,11 @@ class iControl {
     this._step = (isFinite(stepRaw) && stepRaw > 0) ? (1 / stepRaw) : 1;
     this._displayType = paramData.displayType;
     this._label = paramData.label;
+    // Newly attached controls start with placeholder values until param metadata arrives.
+    // Apply the declared default immediately so widgets that depend on callbacks for
+    // visibility/positioning (such as EQ points) are initialized before host updates.
+    this._value = this.toNormalized(this._defaultVal);
+    this.redraw();
   }
 
   setDefault(defaultValue) {

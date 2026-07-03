@@ -88,12 +88,43 @@ function GetParameterInfo(paramIdx) {
 }
 
 function AddControl(controlObj) {
-    // add control to controls array or update it if already present
-    for (var i = 0; i  < controls.length; i++) {
-        if(controls[i].getDomElement().id == controlObj.getDomElement().id) {
+    if (!controlObj || typeof controlObj.getDomElement !== 'function') {
+        return;
+    }
+
+    var domElement = controlObj.getDomElement();
+    var domId = domElement ? domElement.id : null;
+    var paramIdx = (typeof controlObj.getParamIdx === 'function') ? controlObj.getParamIdx() : null;
+    var messageIdx = (typeof controlObj.getMessageIdx === 'function') ? controlObj.getMessageIdx() : null;
+    var ctorName = (controlObj.constructor && controlObj.constructor.name) ? controlObj.constructor.name : "";
+
+    // Keep support for composite controls that intentionally register multiple logical
+    // controls on the same DOM node (for example EQ points with internal freq/gain/q/onoff).
+    // Only dedupe exact logical duplicates introduced by repeated SetupControls calls.
+    for (var i = 0; i < controls.length; i++) {
+        var existing = controls[i];
+        if (existing === controlObj || typeof existing.getDomElement !== 'function') {
+            if (existing === controlObj) return;
+            continue;
+        }
+
+        var existingElement = existing.getDomElement();
+        if (!existingElement) continue;
+
+        var sameDomId = existingElement.id === domId;
+        if (!sameDomId) continue;
+
+        var existingParamIdx = (typeof existing.getParamIdx === 'function') ? existing.getParamIdx() : null;
+        var existingMessageIdx = (typeof existing.getMessageIdx === 'function') ? existing.getMessageIdx() : null;
+        var existingCtorName = (existing.constructor && existing.constructor.name) ? existing.constructor.name : "";
+
+        if (existingParamIdx === paramIdx &&
+            existingMessageIdx === messageIdx &&
+            existingCtorName === ctorName) {
             return;
         }
     }
+
     controls.push(controlObj);
 }
 
@@ -108,11 +139,19 @@ function GetControlByParamId(id) {
 }
 
 function GetControlById(id) {
-    for(var i =0; i < controls.length; i++) {
-        if(controls[i].getDomElement().id == id) {
-            return controls[i];
+    var retcontrols = [];
+    for (var i = 0; i < controls.length; i++) {
+        if (controls[i].getDomElement().id == id) {
+            retcontrols.push(controls[i]);
         }
     }
+
+    if (retcontrols.length == 1) {
+        return retcontrols[0];
+    } else if (retcontrols.length > 1) {
+        return retcontrols;
+    }
+
     return null;
 }
 
@@ -203,6 +242,9 @@ function SetupControls() {
                 break;
             case "vertical-fader":
                 AddControl( new iVerticalFader({"id": control.id, "inputValueId": control.id+"-val", "paramData":paramData}));
+                break;
+            case "eqcontrol":
+                AddControl(new ieqcontrol({"id": control.id, "paramData": paramData}));
                 break;
             case "switch":
                 AddControl( new iSwitch({"id": control.id, "paramData":paramData}));
