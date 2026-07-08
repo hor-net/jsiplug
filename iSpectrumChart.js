@@ -750,7 +750,6 @@ class iSpectrumChart extends iControl {
         }
         spectrum.integrationTime = next;
         spectrum._bypassDecay = next > 0;
-        console.log('[iSpectrumChart] setIntegrationTime', id, '->', next);
     }
 
     removeSpectrum(id) {
@@ -837,10 +836,6 @@ class iSpectrumChart extends iControl {
         // Disabled when integrationTime <= 0, so eq/deq/dynThr stay untouched.
         const integrationMs = spectrum._integrationTime;
         if (integrationMs > 0) {
-            if (!spectrum._loggedSmoothing) {
-                console.log('[iSpectrumChart] smoothing active for', id, 'integrationMs=', integrationMs);
-                spectrum._loggedSmoothing = true;
-            }
             // Allocate / reallocate the power buffer alongside the spectrum length
             if (!spectrum._smoothedPower || spectrum._smoothedPower.length !== N) {
                 spectrum._smoothedPower = new Float32Array(N);
@@ -895,33 +890,7 @@ class iSpectrumChart extends iControl {
                 integrated[i] = downsampledData[i];
             }
 
-            // Live DOM diagnostic + console log: refreshed at most every 250ms
-            if (!this._diagLast || currentTime - this._diagLast > 250) {
-                this._diagLast = currentTime;
-                const diagEl = document.getElementById('integration-diag');
-                if (diagEl) {
-                    const setText = (id, val) => {
-                        const el = document.getElementById(id);
-                        if (el) el.textContent = val;
-                    };
-                    setText('diag-integration', integrationMs.toString());
-                    setText('diag-alpha', alpha.toFixed(4));
-                    if (id === 'input') {
-                        setText('diag-input-raw', rawDbSample0.toFixed(2));
-                        setText('diag-input-smoothed', downsampledData[0].toFixed(2));
-                    } else if (id === 'output') {
-                        setText('diag-output-raw', rawDbSample0.toFixed(2));
-                        setText('diag-output-smoothed', downsampledData[0].toFixed(2));
-                    }
-                }
-                console.log('[iSpectrumChart]', id,
-                    'integrationMs=', integrationMs,
-                    'dt(ms)=', dt.toFixed(2),
-                    'alpha=', alpha.toFixed(4),
-                    'rawDb0=', rawDbSample0.toFixed(2),
-                    'smoothedDb0=', downsampledData[0].toFixed(2));
-            }
-        } else {
+            } else {
             // Integration disabled: reset the buffer so re-enabling starts clean
             if (spectrum._smoothedPower) spectrum._smoothedPower = null;
             spectrum._lastUpdateTime = null;
