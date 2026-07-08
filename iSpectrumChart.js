@@ -19,6 +19,7 @@ class iSpectrumChart extends iControl {
         this._lastTime = performance.now();
         this._fps = 0;
         this._isAnimating = false;
+        this._webglAvailable = false;
 
         // Initialize caches for coordinate conversion methods
         this._freqToXCache = new Map();
@@ -93,7 +94,7 @@ class iSpectrumChart extends iControl {
         this._setupCanvases();
         
         // Initialize WebGL
-        this._initWebGL();
+        this._webglAvailable = this._initWebGL();
         
         // Setup resize observer
         this._resizeObserver = new ResizeObserver(() => this._updateCanvasSize());
@@ -102,10 +103,14 @@ class iSpectrumChart extends iControl {
         // Initial setup with zero data
         this._updateCanvasSize();
         this._drawGrid();
-        this._drawInitialSpectrum();
+        if (this._webglAvailable) {
+            this._drawInitialSpectrum();
+        }
         
         // Start the animation loop
-        this._startAnimation();
+        if (this._webglAvailable) {
+            this._startAnimation();
+        }
     
         // Add click handler for peak hold reset
         this._domElement.addEventListener('click', () => {
@@ -126,26 +131,25 @@ class iSpectrumChart extends iControl {
         }
 
         const downsampledData = new Float32Array(targetSize);
-        const downsampledFrequencies = new Float32Array(targetSize); // Always create frequencies array
+        const downsampledFrequencies = new Float32Array(targetSize);
 
         for (let i = 0; i < targetSize; i++) {
             // Calculate the range of original indices that map to this target index
             const originalStartIndex = Math.floor((i / targetSize) * N);
             const originalEndIndex = Math.min(N - 1, Math.floor(((i + 1) / targetSize) * N) - 1);
+            const centerIndex = originalStartIndex + Math.floor((originalEndIndex - originalStartIndex) / 2);
 
-            // Find the maximum dB value in this range (peak detection)
-            let maxDb = -Infinity;
-            for (let j = originalStartIndex; j <= originalEndIndex; j++) {
-                maxDb = Math.max(maxDb, data[j]);
-            }
-            downsampledData[i] = maxDb;
+            // Use the bucket center as the representative point.
+            // This keeps 0 dB/oct visually neutral and avoids the upward
+            // bias that max-per-bucket introduces on descending spectra.
+            downsampledData[i] = data[centerIndex];
 
             // Calculate frequency for the downsampled point
-            // Use the frequency at the start index of the range, or calculate if frequencies array is null
+            // Use the representative frequency of the same source point.
             if (frequencies) {
-                 downsampledFrequencies[i] = frequencies[originalStartIndex];
+                 downsampledFrequencies[i] = frequencies[centerIndex];
             } else {
-                 downsampledFrequencies[i] = this._binToFreq(originalStartIndex, N);
+                 downsampledFrequencies[i] = this._binToFreq(centerIndex, N);
             }
         }
 
@@ -217,7 +221,15 @@ class iSpectrumChart extends iControl {
         this._spectrumCtx = this._spectrumCanvas.getContext('webgl', {
             antialias: true,
             alpha: true
+        }) || this._spectrumCanvas.getContext('experimental-webgl', {
+            antialias: true,
+            alpha: true
         });
+
+        if (!this._spectrumCtx) {
+            this._spectrumCanvas.style.display = 'none';
+            console.warn('WebGL not available for spectrum chart');
+        }
     }
 
     _setupTooltip() {
@@ -371,7 +383,9 @@ class iSpectrumChart extends iControl {
         }
         
         // Otherwise, force a redraw
-        this._drawFrame();
+        if (this._webglAvailable) {
+            this._drawFrame();
+        }
     }
     
     // Helper method to get the tilt value for a specific spectrum
@@ -657,6 +671,9 @@ class iSpectrumChart extends iControl {
     }
 
     _startAnimation() {
+        if (!this._webglAvailable) {
+            return;
+        }
         if (!this._isAnimating) {
             this._isAnimating = true;
             this._animate();
@@ -691,6 +708,7 @@ class iSpectrumChart extends iControl {
             isPeakHoldEnabled: true,
             isDecayEnabled: true,  // Add decay control option
             scaleId: 'default',  // Always set default scale
+            integrationTime: 0,   // 0 disables EMA smoothing; >0 = milliseconds
             preferences: {
                 lineColor: '#2196F3',
                 fillColor: 'rgba(33, 150, 243, 0.3)',
@@ -703,13 +721,36 @@ class iSpectrumChart extends iControl {
 
         // First spread the defaults, then spread the options to override if specified
         const spectrum = { ...defaultSpectrum, ...options };
-        
+
         // Ensure scaleId exists in scales Map, fallback to default if not
         if (!this._scales.has(spectrum.scaleId)) {
             spectrum.scaleId = 'default';
         }
-        
+
+        // Initialize EMA smoothing state for this spectrum
+        spectrum._integrationTime = Number(spectrum.integrationTime) || 0;
+        spectrum._smoothedPower = null;   // sized in updateSpectrum
+        spectrum._lastUpdateTime = null;  // measured in ms
+        spectrum._forceOverwrite = true;  // matches REAPER's integrate_en bootstrap
+        spectrum._bypassDecay = spectrum._integrationTime > 0; // integration renders directly
+        spectrum._integratedValue = null; // sized in updateSpectrum; holds dB values for the renderer
+
         this._spectrumLayers.set(id, spectrum);
+    }
+
+    // Public setter so the preferences UI can update integration time at runtime
+    setIntegrationTime(value, id) {
+        const spectrum = this._spectrumLayers.get(id);
+        if (!spectrum) return;
+        const next = Number(value);
+        if (isNaN(next) || next < 0) return;
+        if (spectrum._integrationTime !== next) {
+            spectrum._integrationTime = next;
+            spectrum._forceOverwrite = true;
+        }
+        spectrum.integrationTime = next;
+        spectrum._bypassDecay = next > 0;
+        console.log('[iSpectrumChart] setIntegrationTime', id, '->', next);
     }
 
     removeSpectrum(id) {
@@ -723,17 +764,34 @@ class iSpectrumChart extends iControl {
 
         const currentTime = performance.now();
 
-        // --- Add Downsampling Step ---
-        // Calculate the effective drawing width in CSS pixels
-        const cssWidth = this._gridCanvas.width / this._dpr;
-        const effectiveWidth = cssWidth - this._leftPadding - this._rightPadding;
-        // Determine target size, minimum 100 points to ensure some detail
-        const targetSize = Math.max(100, Math.floor(effectiveWidth));
+        // For layers that have integration enabled (input / output) we draw the
+        // raw FFT bins directly with no spatial averaging, exactly like the
+        // stock REAPER analyzer. Down-sampling here with a center-of-bucket
+        // pick was locking on narrow leakage spikes and producing the
+        // "two-spike" artefact in the high-frequency tail.
+        const useNativeBins = !!spectrum._bypassDecay;
 
-        // Downsample the input data
-        const downsampled = this._downsampleData(data, frequencies, targetSize);
-        const downsampledData = downsampled.data;
-        const downsampledFrequencies = downsampled.frequencies;
+        let downsampledData;
+        let downsampledFrequencies;
+        if (useNativeBins) {
+            // data is already the FFT magnitude vector (FFT_SIZE/2 entries).
+            // frequencies, if provided, is parallel to data; otherwise we
+            // build a log-spaced array below.
+            downsampledData = data;
+            downsampledFrequencies = frequencies || null;
+        } else {
+            // --- Add Downsampling Step ---
+            // Calculate the effective drawing width in CSS pixels
+            const cssWidth = this._gridCanvas.width / this._dpr;
+            const effectiveWidth = cssWidth - this._leftPadding - this._rightPadding;
+            // Determine target size, minimum 100 points to ensure some detail
+            const targetSize = Math.max(100, Math.floor(effectiveWidth));
+
+            // Downsample the input data
+            const downsampled = this._downsampleData(data, frequencies, targetSize);
+            downsampledData = downsampled.data;
+            downsampledFrequencies = downsampled.frequencies;
+        }
         const N = downsampledData.length; // Use the downsampled size
 
         // Update frequencies if provided (use downsampled frequencies)
@@ -775,6 +833,101 @@ class iSpectrumChart extends iControl {
             freqs = spectrum._cachedFreqs;
         }
 
+        // --- REAPER-style spectrum integration (EMA in power domain) ---
+        // Disabled when integrationTime <= 0, so eq/deq/dynThr stay untouched.
+        const integrationMs = spectrum._integrationTime;
+        if (integrationMs > 0) {
+            if (!spectrum._loggedSmoothing) {
+                console.log('[iSpectrumChart] smoothing active for', id, 'integrationMs=', integrationMs);
+                spectrum._loggedSmoothing = true;
+            }
+            // Allocate / reallocate the power buffer alongside the spectrum length
+            if (!spectrum._smoothedPower || spectrum._smoothedPower.length !== N) {
+                spectrum._smoothedPower = new Float32Array(N);
+                spectrum._forceOverwrite = true;
+            }
+
+            // dt clamped to avoid divide-by-zero on bursty frame arrivals
+            const lastUpdate = spectrum._lastUpdateTime;
+            const dt = lastUpdate === null
+                ? 16.0
+                : Math.max(1.0, Math.min(1000.0, currentTime - lastUpdate));
+            spectrum._lastUpdateTime = currentTime;
+
+            // REAPER-style alpha: -5 * (dt_seconds) / (integration_seconds)
+            // Both dt and integrationMs are in milliseconds, so we divide dt by 1000
+            // to convert to seconds before applying the formula.
+            const alpha = 1.0 - Math.exp(-5.0 * (dt / 1000.0) / (integrationMs / 1000.0));
+
+            const smoothed = spectrum._smoothedPower;
+            // Sample the raw input BEFORE we mutate downsampledData, so the diagnostic
+            // log below can show a real raw-vs-smoothed comparison.
+            const rawDbSample0 = downsampledData[0];
+            for (let i = 0; i < N; ++i) {
+                const db = downsampledData[i];
+                // Treat any bin at the analyzer floor as silence for the integrator
+                const power = db > this._minDb ? Math.pow(10, db / 10) : 0.0;
+
+                if (spectrum._forceOverwrite) {
+                    smoothed[i] = power;
+                } else {
+                    smoothed[i] = smoothed[i] + alpha * (power - smoothed[i]);
+                }
+
+                downsampledData[i] = smoothed[i] > 0
+                    ? 10 * Math.log10(smoothed[i])
+                    : this._minDb;
+            }
+            spectrum._forceOverwrite = false;
+
+            // Render the integrated power values directly, with no further
+            // spatial smoothing. The EMA in the power domain is the only
+            // temporal filter we apply; REAPER's gfxanalyzer also draws the
+            // integrated bins as-is (no 3-point median, no Hann kernel).
+            // The previous 3-point median + the C++ 3-bin Hann together were
+            // actually locking narrow leakage spikes into the high-frequency
+            // tail instead of removing them.
+            if (!spectrum._integratedValue || spectrum._integratedValue.length !== N) {
+                spectrum._integratedValue = new Float32Array(N);
+            }
+            const integrated = spectrum._integratedValue;
+            for (let i = 0; i < N; ++i) {
+                integrated[i] = downsampledData[i];
+            }
+
+            // Live DOM diagnostic + console log: refreshed at most every 250ms
+            if (!this._diagLast || currentTime - this._diagLast > 250) {
+                this._diagLast = currentTime;
+                const diagEl = document.getElementById('integration-diag');
+                if (diagEl) {
+                    const setText = (id, val) => {
+                        const el = document.getElementById(id);
+                        if (el) el.textContent = val;
+                    };
+                    setText('diag-integration', integrationMs.toString());
+                    setText('diag-alpha', alpha.toFixed(4));
+                    if (id === 'input') {
+                        setText('diag-input-raw', rawDbSample0.toFixed(2));
+                        setText('diag-input-smoothed', downsampledData[0].toFixed(2));
+                    } else if (id === 'output') {
+                        setText('diag-output-raw', rawDbSample0.toFixed(2));
+                        setText('diag-output-smoothed', downsampledData[0].toFixed(2));
+                    }
+                }
+                console.log('[iSpectrumChart]', id,
+                    'integrationMs=', integrationMs,
+                    'dt(ms)=', dt.toFixed(2),
+                    'alpha=', alpha.toFixed(4),
+                    'rawDb0=', rawDbSample0.toFixed(2),
+                    'smoothedDb0=', downsampledData[0].toFixed(2));
+            }
+        } else {
+            // Integration disabled: reset the buffer so re-enabling starts clean
+            if (spectrum._smoothedPower) spectrum._smoothedPower = null;
+            spectrum._lastUpdateTime = null;
+            spectrum._forceOverwrite = true;
+        }
+
         // Apply tilt and update peak/decay in a single loop (use downsampled data)
         // Keep the analyzer baseline flat when there is no signal: the tilt only affects
         // bins that rise above the floor, so silence does not become a diagonal line.
@@ -793,11 +946,15 @@ class iSpectrumChart extends iControl {
                 spectrum.peakHoldData[i] = Math.max(spectrum.peakHoldData[i], db);
             }
 
-            // Decay update
-            if (tiltedData[i] > spectrum.decayData[i].value || !spectrum.isDecayEnabled) {
-                spectrum.decayData[i].value = tiltedData[i];
-                spectrum.decayData[i].startValue = tiltedData[i];
-                spectrum.decayData[i].startTime = currentTime;
+            // Decay update: skipped entirely when the integrated curve is rendered
+            // (the renderer reads _integratedValue directly so it does not need the
+            // post-FFT peak-and-decay pass).
+            if (!spectrum._bypassDecay) {
+                if (tiltedData[i] > spectrum.decayData[i].value || !spectrum.isDecayEnabled) {
+                    spectrum.decayData[i].value = tiltedData[i];
+                    spectrum.decayData[i].startValue = tiltedData[i];
+                    spectrum.decayData[i].startTime = currentTime;
+                }
             }
         }
 
@@ -884,6 +1041,9 @@ class iSpectrumChart extends iControl {
     _drawFrame() {
 
         const gl = this._spectrumCtx;
+        if (!gl || !this._shaderProgram || !this._positionBuffer) {
+            return;
+        }
         const currentTime = performance.now();
 
         // Cache frequently used values
@@ -944,6 +1104,9 @@ class iSpectrumChart extends iControl {
     
     _drawInitialSpectrum() {
         const gl = this._spectrumCtx;
+        if (!gl || !this._shaderProgram || !this._positionBuffer) {
+            return;
+        }
         
         // Enable blending
         gl.enable(gl.BLEND);
@@ -1004,7 +1167,20 @@ class iSpectrumChart extends iControl {
             }
         }
         const points = spectrum._cachedPoints;
-        
+
+        // When integration is active, render the integrated curve directly and skip
+        // the decay pass. This eliminates the "trembling" caused by repeatedly resetting
+        // decayData at every FFT frame while the renderer is interpolating its decay.
+        if (spectrum._bypassDecay && spectrum._integratedValue) {
+            for (let i = 0; i < N; ++i) {
+                const dbValue = spectrum._integratedValue[i];
+                const clampedValue = Math.min(scale.maxDb, Math.max(scale.minDb, dbValue));
+                points[i].x = this._freqToX(freqs[i]);
+                points[i].y = this._dbToY(clampedValue, spectrum.scaleId);
+            }
+            return points;
+        }
+
         // If decay is not enabled, skip decay logic
         if (!spectrum.isDecayEnabled) {
             for (let i = 0; i < N; ++i) {
@@ -1016,13 +1192,15 @@ class iSpectrumChart extends iControl {
             }
             return points;
         }
-        
+
 
         // Batch process all points with decay
         for (let i = 0; i < N; ++i) {
             if (spectrum.decayData[i].startTime > 0) {
                 const elapsed = currentTime - spectrum.decayData[i].startTime;
-                const startValue = spectrum.decayData[i].startValue ?? spectrum.decayData[i].value;
+                const startValue = (spectrum.decayData[i].startValue !== undefined && spectrum.decayData[i].startValue !== null)
+                    ? spectrum.decayData[i].startValue
+                    : spectrum.decayData[i].value;
                 if (elapsed < this._decayTimeConstant) {
                     spectrum.decayData[i].value = startValue + (scale.minDb - startValue) * (elapsed / this._decayTimeConstant);
                 } else {
@@ -1042,8 +1220,12 @@ class iSpectrumChart extends iControl {
     _preparePeakPoints(spectrum, scale) {
         return this._interpolatePoints(
             spectrum.peakHoldData.map((value, i) => {
-                const freq = spectrum.frequencies?.[i] ?? 
-                    this._minFreq * Math.pow(this._maxFreq / this._minFreq, i / (spectrum.peakHoldData.length - 1));
+                const hasFrequencyValue = spectrum.frequencies &&
+                    spectrum.frequencies[i] !== undefined &&
+                    spectrum.frequencies[i] !== null;
+                const freq = hasFrequencyValue
+                    ? spectrum.frequencies[i]
+                    : this._minFreq * Math.pow(this._maxFreq / this._minFreq, i / (spectrum.peakHoldData.length - 1));
                 
                 // The tilt is already applied in updateSpectrum, so we don't need to apply it here
                 let peakValue = value;
@@ -1059,46 +1241,77 @@ class iSpectrumChart extends iControl {
 
     _initWebGL() {
         const gl = this._spectrumCtx;
-        
+        if (!gl) {
+            return false;
+        }
+
         // Clear color to transparent
         gl.clearColor(0, 0, 0, 0);
-        
-        // Vertex shader for spectrum
+
+        // Vertex shader for spectrum.
+        // a_position: vertex position in pixel space.
+        // a_edge: 0 = full opacity (core of the line), 1 = transparent
+        //         (outer edge of the AA falloff region).
         const vsSource = `
             attribute vec2 a_position;
+            attribute float a_edge;
             uniform vec2 u_resolution;
-            
+            varying float v_edge;
+
             void main() {
                 // Convert from pixels to clip space
                 vec2 zeroToOne = a_position / u_resolution;
                 vec2 zeroToTwo = zeroToOne * 2.0;
                 vec2 clipSpace = zeroToTwo - 1.0;
                 gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+                v_edge = a_edge;
             }
         `;
-        
-        // Fragment shader for spectrum
+
+        // Fragment shader for spectrum.
+        // Modulates alpha by smoothstep(0, 1, 1 - v_edge) so that the
+        // outer AA falloff fades out smoothly. The "core" of the line
+        // (a_edge == 0) keeps full alpha, the "outer rim" (a_edge == 1)
+        // fades to fully transparent. This is geometric anti-aliasing
+        // applied to a triangle-strip line, equivalent to MSAA on the
+        // line edges without requiring a multisampled framebuffer.
         const fsSource = `
             precision mediump float;
             uniform vec4 u_color;
-            
+            varying float v_edge;
+
             void main() {
-                gl_FragColor = u_color;
+                float coverage = 1.0 - v_edge;
+                coverage = smoothstep(0.0, 1.0, coverage);
+                gl_FragColor = vec4(u_color.rgb, u_color.a * coverage);
             }
         `;
-        
+
         // Create shader program
         const vertexShader = this._createShader(gl, gl.VERTEX_SHADER, vsSource);
         const fragmentShader = this._createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+        if (!vertexShader || !fragmentShader) {
+            return false;
+        }
         this._shaderProgram = this._createProgram(gl, vertexShader, fragmentShader);
-        
+        if (!this._shaderProgram) {
+            return false;
+        }
+
         // Get attribute and uniform locations
         this._positionLocation = gl.getAttribLocation(this._shaderProgram, 'a_position');
+        this._edgeLocation = gl.getAttribLocation(this._shaderProgram, 'a_edge');
         this._resolutionLocation = gl.getUniformLocation(this._shaderProgram, 'u_resolution');
         this._colorLocation = gl.getUniformLocation(this._shaderProgram, 'u_color');
-        
+        if (this._positionLocation < 0 || this._edgeLocation < 0 ||
+            !this._resolutionLocation || !this._colorLocation) {
+            return false;
+        }
+
         // Create buffers
         this._positionBuffer = gl.createBuffer();
+        this._edgeBuffer = gl.createBuffer();
+        return !!(this._positionBuffer && this._edgeBuffer);
     }
     
     _createShader(gl, type, source) {
@@ -1129,71 +1342,101 @@ class iSpectrumChart extends iControl {
     
     // Replace the existing _drawSpectrum method
     _drawSpectrum(ctx, points, startX, endX, bottomY, preferences) {
-        
+
         const gl = ctx;
+        if (!gl || !this._shaderProgram || !this._positionBuffer) {
+            return;
+        }
         // Set up WebGL state
         gl.useProgram(this._shaderProgram);
         gl.enableVertexAttribArray(this._positionLocation);
+        gl.enableVertexAttribArray(this._edgeLocation);
         gl.bindBuffer(gl.ARRAY_BUFFER, this._positionBuffer);
         gl.vertexAttribPointer(this._positionLocation, 2, gl.FLOAT, false, 0, 0);
-        
+
         // Set uniforms
         gl.uniform2f(this._resolutionLocation, gl.canvas.width, gl.canvas.height);
-        
+
         // Draw fill if enabled
         if (preferences.showFill) {
             // Reset WebGL state for fill
             gl.enable(gl.BLEND);
             gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-            
+
             const vertices = new Float32Array(this._prepareVertices(points, startX, endX, bottomY));
             gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
-            
+
+            // The fill uses the same shader as the line, but it does not need
+            // AA on its edges. Bind an a_edge buffer of all zeros so that
+            // v_edge = 0 in the fragment shader → coverage = smoothstep(0, 1, 1)
+            // = 1, and the fill renders at its full uniform alpha. Without this
+            // bind, v_edge is undefined for fill vertices and the rendered
+            // alpha ends up as a noisy pattern (visible as vertical "comb"
+            // stripes on the input/output fills).
+            if (!this._fillEdgeCache || this._fillEdgeCache.length !== vertices.length / 2) {
+                this._fillEdgeCache = new Float32Array(vertices.length / 2); // stays all-zero
+            }
+            gl.bindBuffer(gl.ARRAY_BUFFER, this._edgeBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, this._fillEdgeCache, gl.DYNAMIC_DRAW);
+            gl.vertexAttribPointer(this._edgeLocation, 1, gl.FLOAT, false, 0, 0);
+
             const fillColor = this._parseColor(preferences.fillColor);
             // Set color directly without creating new array
             gl.uniform4f(this._colorLocation, fillColor[0], fillColor[1], fillColor[2], fillColor[3]);
-            
+
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, vertices.length / 2);
         }
-        
+
         // Draw line using triangles
         const pixelRatio = window.devicePixelRatio || 1;
         const lineWidth = (preferences.lineWidth || 2) * pixelRatio;
-        const lineVertices = this._prepareLineVertices(points, lineWidth);
-        gl.bufferData(gl.ARRAY_BUFFER, lineVertices, gl.DYNAMIC_DRAW);
+        const { positions, edges } = this._prepareLineVertices(points, lineWidth);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
+        gl.vertexAttribPointer(this._positionLocation, 2, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._edgeBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, edges, gl.DYNAMIC_DRAW);
+        gl.vertexAttribPointer(this._edgeLocation, 1, gl.FLOAT, false, 0, 0);
         const lineColor = this._parseColor(preferences.lineColor);
         gl.uniform4f(this._colorLocation, lineColor[0], lineColor[1], lineColor[2], lineColor[3]);
-        
-        gl.drawArrays(gl.TRIANGLES, 0, lineVertices.length / 2);
+
+        gl.drawArrays(gl.TRIANGLES, 0, positions.length / 2);
     }
 
     _drawPeakHold(ctx, points, preferences) {
         const gl = ctx;
-        
+        if (!gl || !this._shaderProgram || !this._positionBuffer) {
+            return;
+        }
+
         // Enable blending
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        
+
         // Prepare vertices for the peak line using triangles
         const pixelRatio = window.devicePixelRatio || 1;
         const lineWidth = (preferences.peakWidth || preferences.lineWidth || 2) * pixelRatio;
-        const vertices = this._prepareLineVertices(points, lineWidth);
-        
+        const { positions, edges } = this._prepareLineVertices(points, lineWidth);
+
         // Set up WebGL state
         gl.useProgram(this._shaderProgram);
         gl.enableVertexAttribArray(this._positionLocation);
+        gl.enableVertexAttribArray(this._edgeLocation);
         gl.bindBuffer(gl.ARRAY_BUFFER, this._positionBuffer);
-        
+
         // Upload vertices and set attributes
-        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
         gl.vertexAttribPointer(this._positionLocation, 2, gl.FLOAT, false, 0, 0);
-        
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._edgeBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, edges, gl.DYNAMIC_DRAW);
+        gl.vertexAttribPointer(this._edgeLocation, 1, gl.FLOAT, false, 0, 0);
+
         // Set uniforms
         gl.uniform2f(this._resolutionLocation, gl.canvas.width, gl.canvas.height);
         const peakColor = this._parseColor(preferences.peakColor);
         gl.uniform4fv(this._colorLocation, new Float32Array(peakColor));
-        
-        gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
+
+        gl.drawArrays(gl.TRIANGLES, 0, positions.length / 2);
     }
     
     _prepareVertices(points, startX, endX, bottomY) {
@@ -1216,44 +1459,84 @@ class iSpectrumChart extends iControl {
     }
     
     _prepareLineVertices(points, lineWidth = 2) {
-        if (points.length < 2) return new Float32Array();
-        
-        // Calculate vertices for a series of rectangles
-        const vertices = new Float32Array((points.length - 1) * 12); // 6 vertices per segment (2 triangles)
-        let idx = 0;
-        
-        for (let i = 0; i < points.length - 1; i++) {
-            var p1 = points[i];
-            var p2 = points[i + 1];
-            
-            // Calculate the line direction vector
+        if (points.length < 2) {
+            return { positions: new Float32Array(), edges: new Float32Array() };
+        }
+
+        // Anti-aliased line emission:
+        //   - inner radius: lineWidth/2  (the visible "core" of the line, full opacity)
+        //   - outer radius: lineWidth/2 + 1.0 px (the AA falloff, fades to 0)
+        // For every segment we emit 6 triangles = 18 vertices:
+        //   - 2 triangles on the + side (outer + inner corners of the + band)
+        //   - 2 triangles on the - side (outer + inner corners of the - band)
+        //   - 2 triangles for the core rectangle
+        // Vertices on the outer corners get a_edge = 1 (will fade to transparent
+        // in the fragment shader); vertices on the inner corners and the core
+        // get a_edge = 0 (full opacity). The fragment shader interpolates
+        // v_edge across the triangles and applies smoothstep(0, 1, 1 - v_edge)
+        // to compute per-pixel coverage. This is the standard geometric AA
+        // trick for line strips, equivalent to MSAA on the line edges.
+        const aaWidth = 1.0; // CSS-pixel falloff on each side
+        const innerHalf = lineWidth / 2;
+        const outerHalf = innerHalf + aaWidth;
+
+        const numSegments = points.length - 1;
+        const positions = new Float32Array(numSegments * 36); // 18 vertices * 2 floats
+        const edges    = new Float32Array(numSegments * 18); // 18 vertices * 1 float
+        let posIdx = 0;
+        let edgeIdx = 0;
+        const dpr = this._dpr;
+
+        const v = (px, py, edge) => {
+            positions[posIdx++] = px * dpr;
+            positions[posIdx++] = py * dpr;
+            edges[edgeIdx++] = edge;
+        };
+
+        for (let i = 0; i < numSegments; i++) {
+            const p1 = points[i];
+            const p2 = points[i + 1];
+
             const dx = p2.x - p1.x;
             const dy = p2.y - p1.y;
-            
-            // Normalize the direction vector
             const length = Math.sqrt(dx * dx + dy * dy);
-            const nx = -dy / length * (lineWidth / 2);
-            const ny = dx / length * (lineWidth / 2);
-            
-            // Add vertices for two triangles (6 vertices total)
-            // First triangle
-            vertices[idx++] = (p1.x + nx) * this._dpr;  // v1.x
-            vertices[idx++] = (p1.y + ny) * this._dpr;  // v1.y
-            vertices[idx++] = (p1.x - nx) * this._dpr;  // v2.x
-            vertices[idx++] = (p1.y - ny) * this._dpr;  // v2.y
-            vertices[idx++] = (p2.x + nx) * this._dpr;  // v3.x
-            vertices[idx++] = (p2.y + ny) * this._dpr;  // v3.y
-            
-            // Second triangle
-            vertices[idx++] = (p1.x - nx) * this._dpr;  // v4.x
-            vertices[idx++] = (p1.y - ny) * this._dpr;  // v4.y
-            vertices[idx++] = (p2.x - nx) * this._dpr;  // v5.x
-            vertices[idx++] = (p2.y - ny) * this._dpr;  // v5.y
-            vertices[idx++] = (p2.x + nx) * this._dpr;  // v6.x
-            vertices[idx++] = (p2.y + ny) * this._dpr;  // v6.y
+            if (length < 1e-6) continue;
+
+            // Outward normals (perpendicular to the segment direction)
+            const inNx  = -dy / length * innerHalf;
+            const inNy  =  dx / length * innerHalf;
+            const outNx = -dy / length * outerHalf;
+            const outNy =  dx / length * outerHalf;
+
+            // 4 inner corners (edge=0, full alpha)
+            const p1ipx = p1.x + inNx, p1ipy = p1.y + inNy;
+            const p1imx = p1.x - inNx, p1imy = p1.y - inNy;
+            const p2ipx = p2.x + inNx, p2ipy = p2.y + inNy;
+            const p2imx = p2.x - inNx, p2imy = p2.y - inNy;
+            // 4 outer corners (edge=1, transparent)
+            const p1opx = p1.x + outNx, p1opy = p1.y + outNy;
+            const p1omx = p1.x - outNx, p1omy = p1.y - outNy;
+            const p2opx = p2.x + outNx, p2opy = p2.y + outNy;
+            const p2omx = p2.x - outNx, p2omy = p2.y - outNy;
+
+            // Triangle 1: + band, half 1 (outer p1, inner p1, outer p2)
+            v(p1opx, p1opy, 1); v(p1ipx, p1ipy, 0); v(p2opx, p2opy, 1);
+            // Triangle 2: + band, half 2 (inner p1, inner p2, outer p2)
+            v(p1ipx, p1ipy, 0); v(p2ipx, p2ipy, 0); v(p2opx, p2opy, 1);
+            // Triangle 3: - band, half 1 (inner p1, outer p1, inner p2)
+            v(p1imx, p1imy, 0); v(p1omx, p1omy, 1); v(p2imx, p2imy, 0);
+            // Triangle 4: - band, half 2 (outer p1, outer p2, inner p2)
+            v(p1omx, p1omy, 1); v(p2omx, p2omy, 1); v(p2imx, p2imy, 0);
+            // Triangle 5: core, half 1 (inner p1+, inner p1-, inner p2+)
+            v(p1ipx, p1ipy, 0); v(p1imx, p1imy, 0); v(p2ipx, p2ipy, 0);
+            // Triangle 6: core, half 2 (inner p1-, inner p2-, inner p2+)
+            v(p1imx, p1imy, 0); v(p2imx, p2imy, 0); v(p2ipx, p2ipy, 0);
         }
-        
-        return vertices;
+
+        return {
+            positions: positions.subarray(0, posIdx),
+            edges:    edges.subarray(0, edgeIdx)
+        };
     }
     
     _parseColor(color) {
@@ -1327,7 +1610,9 @@ class iSpectrumChart extends iControl {
 
         // Redraw both grid and spectrums when preferences change
         this._drawGrid();
-        this._drawFrame();
+        if (this._webglAvailable) {
+            this._drawFrame();
+        }
     }
 
     _handleMouseMove(event) {
