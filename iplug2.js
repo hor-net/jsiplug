@@ -210,15 +210,21 @@ function SetupControls() {
                 }));
                 break;
             case 'spectrum-chart':
-                // keep a reference to the chart in the document
-                document.chart = new iSpectrumChart({
-                  "id":control.id,
-                  "minDb":control.getAttribute('data-mindb'),
-                  "maxDb":control.getAttribute('data-maxdb'),
-                  "decayTime":control.getAttribute('data-decaytime'),
-                  "messageId":control.getAttribute("data-messageid")
-                });
-                AddControl(document.chart);
+                // Keep the chart optional so a WebGL/WebView failure does not
+                // prevent the rest of the UI controls from initializing.
+                try {
+                    document.chart = new iSpectrumChart({
+                      "id":control.id,
+                      "minDb":control.getAttribute('data-mindb'),
+                      "maxDb":control.getAttribute('data-maxdb'),
+                      "decayTime":control.getAttribute('data-decaytime'),
+                      "messageId":control.getAttribute("data-messageid")
+                    });
+                    AddControl(document.chart);
+                } catch (error) {
+                    console.error('Failed to initialize spectrum chart', error);
+                    document.chart = null;
+                }
                 break;
         }
     });
