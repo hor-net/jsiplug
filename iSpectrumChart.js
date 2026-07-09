@@ -927,6 +927,16 @@ class iSpectrumChart extends iControl {
             }
         }
 
+        // When integration is active, the renderer reads _integratedValue directly
+        // (see _prepareSpectrumPoints) and ignores decayData / tiltedData. We must
+        // mirror the tilt into _integratedValue here, otherwise the spectrum line
+        // stays flat at 0 dB/oct regardless of the preference. Issue #3.
+        if (spectrum._bypassDecay && spectrum._integratedValue && spectrum._integratedValue.length === N) {
+            for (let i = 0; i < N; ++i) {
+                spectrum._integratedValue[i] = tiltedData[i];
+            }
+        }
+
         // Mark this spectrum as needing an update
         spectrum._needsUpdate = true;
     }
