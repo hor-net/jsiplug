@@ -75,6 +75,12 @@ var paramValues = [];
 var eventQueue = [];
 // param change queue
 var paramQueue = [];
+// control message queue (meter values, etc.) - they may arrive before
+// SetupControls() has been called, in which case the controls do not
+// exist yet. We buffer the raw [ctrlTag, msgTag, msgSize, msg] tuples
+// and replay them once setupReady flips to true.
+// See hor-net/HoRNetVHSMK2#97.
+var scmfQueue = [];
 
 var setupReady = false;
 
@@ -251,7 +257,21 @@ function SCVFD(ctrlTag, val) {
 
 function SCMFD(ctrlTag, msgTag, msgSize, msg) {
   debugLog("SCMFD ctrlTag:", ctrlTag, "msgTag:", msgTag, "msg:", msg);
-  
+
+  // The C++ delegate can send control messages (including meter values
+  // and other "live" data) before the parameter configuration message
+  // (msgTag == -1) that triggers SetupControls(). In that case the
+  // matching control objects do not exist yet and the message would
+  // be silently dropped. Buffer every SCMFD call until setupReady
+  // is true, then replay them in order. The param config message
+  // (msgTag == -1) is safe to apply immediately because it is the
+  // one that flips setupReady.
+  // See hor-net/HoRNetVHSMK2#97.
+  if (!setupReady && msgTag !== -1) {
+    scmfQueue.push([ctrlTag, msgTag, msgSize, msg]);
+    return;
+  }
+
   // if we are receving the parameter configuration message configure the controls
   if(msgTag == -1) {
     SetupControls();
@@ -284,7 +304,7 @@ function SAMFD(msgTag, dataSize, msg) {
     }
     
     setupReady = true;
-    
+
     // Process queued events
     while(paramQueue.length > 0) {
       let p = paramQueue.shift();
@@ -292,6 +312,16 @@ function SAMFD(msgTag, dataSize, msg) {
     }
     while(eventQueue.length > 0) {
       dispatchEvent(eventQueue.shift());
+    }
+    // Replay any SCMFD (control message) calls that arrived before
+    // setupReady was true - typically meter values for controls that
+    // had not been created yet. See hor-net/HoRNetVHSMK2#97.
+    while(scmfQueue.length > 0) {
+      let c = scmfQueue.shift();
+      // Drop the param config message (-1) - it has already been
+      // applied during the SetupControls() call above.
+      if (c[1] === -1) continue;
+      SCMFD(c[0], c[1], c[2], c[3]);
     }
   }
   const event = new CustomEvent("ArbitraryMessage", {detail:{tag: msgTag, value: msg}});
