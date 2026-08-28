@@ -171,6 +171,7 @@ function GetControlByMessageId(id) {
     return retcontrols;
 }
 
+// Expose OnParamChange on window so user code (e.g. index.html) can wrap it.
 function OnParamChange(paramIdx, val) {
   for (var i = 0; i < controls.length; i++ ) {
     if(controls[i] == -1) continue;
@@ -185,8 +186,11 @@ function OnParamChange(paramIdx, val) {
   }
 }
 
-function SetupControls() {
+// Expose OnParamChange globally so user code (e.g. index.html) can wrap it
+// to add side-effects (visual states, dependent widgets) on every change.
+window.OnParamChange = OnParamChange;
 
+function SetupControls() {
     if(controls.length > 0) return;
     
     // all the controls that should receive a message from the delegate
@@ -230,6 +234,34 @@ function SetupControls() {
                 } catch (error) {
                     console.error('Failed to initialize spectrum chart', error);
                     document.chart = null;
+                }
+                break;
+            case 'oscilloscope':
+                // Reusable 2D-canvas oscilloscope component (multi-trace,
+                // peak-hold sub-sampling, optional grid + time labels).
+                // The C++ is dumb (just pushes raw audio bins); the JS owns
+                // display duration, zoom and rendering.
+                // Defensive try/catch so a canvas/JS failure does not break
+                // the rest of the UI.
+                try {
+                    const scope = new MultiOscilloscope({
+                      "id": control.id,
+                      "duration": control.getAttribute('data-duration'),
+                      "sampleRate": control.getAttribute('data-samplerate'),
+                      "minValue": control.getAttribute('data-minvalue'),
+                      "maxValue": control.getAttribute('data-maxvalue'),
+                      "axisColor": control.getAttribute('data-gridcolor'),
+                      "messageId": control.getAttribute("data-messageid")
+                    });
+                    // Expose the scope on the document for easy access from
+                    // setup scripts, matching the spectrum-chart convention.
+                    if (!document.oscilloscopes) {
+                        document.oscilloscopes = [];
+                    }
+                    document.oscilloscopes.push(scope);
+                    AddControl(scope);
+                } catch (error) {
+                    console.error('Failed to initialize oscilloscope', error);
                 }
                 break;
         }
@@ -298,6 +330,7 @@ function SPVFD(paramIdx, val) {
 }
 
 function SCVFD(ctrlTag, val) {
+  console.log('[SCVFD] ctrlTag=', ctrlTag, 'val=', val);
   const event = new CustomEvent("ControlChange", {detail:{tag: ctrlTag, value: val}});
   if(setupReady) {
     dispatchEvent(event);

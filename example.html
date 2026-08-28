@@ -305,8 +305,121 @@
             </script>
         </div>
         <hr>
+        <h3>Oscilloscope</h3>
+        <div class="container-fluid p-3">
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    <label for="scope-duration" class="form-label">Duration: <span id="scope-duration-display">0.10s</span></label>
+                    <input type="range" class="form-range" id="scope-duration" min="1" max="100" value="30">
+                </div>
+                <div class="col-md-4">
+                    <label for="scope-freq" class="form-label">Source frequency: <span id="scope-freq-display">440Hz</span></label>
+                    <input type="range" class="form-range" id="scope-freq" min="20" max="2000" value="440">
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="scope-trigger-toggle">
+                        <label class="form-check-label" for="scope-trigger-toggle">Trigger on trace 1</label>
+                    </div>
+                </div>
+            </div>
+
+            <div id="oscilloscope"
+                 style="width: 100%; height: 280px; margin: 0 auto;"
+                 data-controltype="oscilloscope"
+                 data-messageid="2"
+                 data-duration="0.1"
+                 data-samplerate="48000"
+                 data-minvalue="-1"
+                 data-maxvalue="1"
+                 data-background="rgb(245,245,245)"
+                 data-gridcolor="rgba(0,0,0,0.25)"
+                 data-gridemphasizedcolor="rgba(0,0,0,0.6)"
+                 data-textcolor="rgba(0,0,0,0.8)">
+            </div>
+            <script>
+                addEventListener('ControlSetup', (event) => {
+                    const scope = GetControlById('oscilloscope');
+                    if (!scope) return;
+
+                    // Two demo traces with different colors / gains / offsets.
+                    scope.addTrace('traceA', {
+                        color: '#FF4081',
+                        lineWidth: 1.5,
+                        gain: 1.0,
+                        offset: 0.0,
+                        zIndex: 0
+                    });
+                    scope.addTrace('traceB', {
+                        color: '#4CAF50',
+                        lineWidth: 1.5,
+                        gain: 0.6,
+                        offset: 0.2,
+                        zIndex: 1
+                    });
+
+                    // Slider helpers -----------------------------------------------------
+                    const durationSlider = document.getElementById('scope-duration');
+                    const durationDisplay = document.getElementById('scope-duration-display');
+                    const freqSlider = document.getElementById('scope-freq');
+                    const freqDisplay = document.getElementById('scope-freq-display');
+                    const triggerToggle = document.getElementById('scope-trigger-toggle');
+
+                    const sliderToDuration = (sliderValue) => {
+                        // Log mapping from 0.01s to 5s over slider range 1..100.
+                        const minLog = Math.log10(0.01);
+                        const maxLog = Math.log10(5.0);
+                        const t = (sliderValue - 1) / 99;
+                        return Math.pow(10, minLog + t * (maxLog - minLog));
+                    };
+                    const formatDuration = (s) => s >= 1 ? `${s.toFixed(2)}s` : `${(s * 1000).toFixed(1)}ms`;
+
+                    durationSlider.addEventListener('input', (e) => {
+                        const sec = sliderToDuration(parseInt(e.target.value));
+                        durationDisplay.textContent = formatDuration(sec);
+                        // MultiOscilloscope doesn't have a runtime resize API in
+                        // this build: ring-buffer capacity is fixed at construction
+                        // time. The slider just shows the duration for reference.
+                    });
+
+                    freqSlider.addEventListener('input', (e) => {
+                        freqDisplay.textContent = `${e.target.value}Hz`;
+                    });
+
+                    // Trigger toggle is a UI-only knob in this demo (no trigger
+                    // engine wired into the current MultiOscilloscope API).
+                    triggerToggle.addEventListener('change', () => { /* no-op */ });
+
+                    // Demo signal source -------------------------------------------------
+                    // Drives both traces with synthetic audio so the oscilloscope
+                    // has something to render without any DSP plumbing.
+                    let phaseA = 0;
+                    let phaseB = 0;
+                    const sampleRate = 48000;
+                    const chunkSize = 256;
+
+                    setInterval(() => {
+                        const freq = parseFloat(freqSlider.value);
+                        const chunk = new Float32Array(chunkSize);
+                        const chunkB = new Float32Array(chunkSize);
+                        const dPhaseA = 2 * Math.PI * freq / sampleRate;
+                        const dPhaseB = 2 * Math.PI * (freq * 0.5) / sampleRate;
+                        for (let i = 0; i < chunkSize; i++) {
+                            chunk[i] = 0.7 * Math.sin(phaseA) + 0.2 * Math.sin(phaseA * 3.1);
+                            chunkB[i] = 0.6 * Math.sin(phaseB);
+                            phaseA += dPhaseA;
+                            phaseB += dPhaseB;
+                        }
+                        scope.pushSamples('traceA', chunk);
+                        scope.pushSamples('traceB', chunkB);
+                    }, 1000 / 60);
+                });
+            </script>
+        </div>
+        <hr>
         <script type="text/javascript" src="iplug2.js"></script>
         <script type="text/javascript" src="icontrols.js"></script>
         <script type="text/javascript" src="iSpectrumChart.js"></script>
+        <script type="text/javascript" src="MultiOscilloscope.js"></script>
     </body>
 </html>

@@ -599,7 +599,9 @@ class iVerticalFader extends iDraggable {
   }
 
   updateFader() {
-    this._cursor.style.transform = "translate(0px, -" + (this._value * (this._fader.offsetHeight - this._cursor.offsetHeight)) + "px)";
+    // -50% sulla X mantiene il cursore centrato sul groove (il CSS usa
+    // translate(-50%, 0) ma il JS sovrascrive il transform ad ogni updateFader).
+    this._cursor.style.transform = "translate(-50%, -" + (this._value * (this._fader.offsetHeight - this._cursor.offsetHeight)) + "px)";
   }
 
   setValue(value) {
