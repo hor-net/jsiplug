@@ -24,14 +24,13 @@
  *
  *   2. pushRaw() decodes the incoming interleaved Float32 samples,
  *      deinterleaves every layout entry the user has registered, and
- *      for each trace splits its samples into `ceil(numBins / samplesPerPixel)`
- *      min/max blocks (one per pixel column) and appends each
- *      [max, min] pair to that trace's FIFO queue.
+ *      treats the payload as a full history snapshot, reducing it to
+ *      min/max blocks directly in the display buffers, oldest first.
+ *      Overlapping snapshots must NOT be queued as new audio.
  *
- *   3. The rAF tick drains every FIFO one entry per pixel column
- *      (paced by wall-clock so the visible scroll speed is exactly
- *      bufferSize / duration px/sec), shifts every ring buffer left
- *      by that many columns, and redraws.
+ *   3. Between snapshots the rAF tick scrolls left, paced by wall-clock
+ *      at bufferSize / duration px/sec, holding the newest value at
+ *      the right edge until the next authoritative snapshot arrives.
  *
  *   4. Drawing strokes one VERTICAL BAR per pixel column per visible
  *      trace (from minBuffer[i] to maxBuffer[i]), back-to-front in
@@ -40,8 +39,9 @@
  *      tweak them without mutating the ring buffer.
  *
  *   5. A separate `samples` Float32Array on each trace mirrors the
- *      most recent raw deinterleaved chunk (samples[0] = newest
- *      sample in the chunk, samples[visibleSamples-1] = oldest).
+ *      most recent raw deinterleaved chunk in chronological order:
+ *      samples[0] is the OLDEST sample in the chunk (5 s ago end of
+ *      the scope), samples[visibleSamples-1] is the NEWEST ("now").
  *      It's purely for inspection / debugging / tests — it does NOT
  *      drive rendering.
  *
@@ -136,6 +136,12 @@
       // ----- shared timing state (one scroll, multiple traces) -----
       this._scrollAccum   = 0;
       this._lastScrollTime = null;
+      // The C++ transport is a rolling full-history snapshot. Its first
+      // frame seeds the display; later frames contribute only their newly
+      // elapsed tail to the FIFO used by the smooth rAF scroll.
+      this._hasScopeSnapshot = false;
+      this._lastScopeSnapshotMs = null;
+      this._scopeSampleAccum = 0;
 
       // ----- optional grid -----
       this._grid = null;
@@ -242,9 +248,9 @@
         // How to draw the trace per pixel column:
         //   'bar'  (default): vertical bar from minBuffer[i] to maxBuffer[i]
         //                     (the classic waveform "filled envelope" look).
-        //   'line': polyline through maxBuffer[i] across columns, no fill.
+        //   'line': polyline through the signed peak of each column, no fill.
         //          Use for state-like traces (gain, envelope follower) where
-        //          you want a clean temporal evolution of a single value.
+        //          peaks must retain their amplitude while scrolling.
         _renderStyle: (opts.renderStyle === 'line') ? 'line'
                   : (opts.renderStyle === 'envelope') ? 'envelope' : 'bar',
 
@@ -304,8 +310,8 @@
      * "min/max envelope as filled area" look used for audio waveform
      * displays.
      *
-     * `renderStyle: 'line'` draws a polyline that connects the
-     * `maxBuffer[i]` values across consecutive pixel columns. Niente
+     * `renderStyle: 'line'` draws a polyline through the extremum with
+     * greatest absolute magnitude in each column, preserving its sign. Niente
      * fill verticale: solo una linea. Useful for state-like traces
      * (gain, envelope follower output, threshold) where you want to
      * see the temporal evolution of a single value, not the
@@ -631,6 +637,7 @@
       }
       this._scrollAccum = 0;
       this._lastScrollTime = null;
+      this._hasScopeSnapshot = false;
     }
 
     // ================================================================
@@ -643,10 +650,22 @@
         : ((cb) => setTimeout(() => cb(performance.now()), 16));
       const tick = (now) => {
         this._animationHandle = raf(tick);
-        try { this._scrollByTime(now); this._render(); }
+        try { this._animate(now); }
         catch (e) { console.error('[MultiOsc]', e); }
       };
       this._animationHandle = raf(tick);
+    }
+
+    _scopeNowMs() {
+      return (typeof performance !== 'undefined' && performance.now)
+        ? performance.now() : Date.now();
+    }
+
+    // One rAF frame. The FIFO receives only new snapshot tail data, so
+    // this preserves continuous scrolling between host messages.
+    _animate(now) {
+      this._scrollByTime(now);
+      this._render();
     }
 
     _stopAnimation() {
@@ -750,10 +769,10 @@
      * in the payload's `layout`, case-insensitive), apply JOINT
      * auto-scale across all present traces so their relative levels
      * stay meaningful, then for each trace split its samples into
-     * `ceil(numBins / samplesPerPixel)` min/max blocks (one per pixel
-     * column) and append each [max, min] pair to that trace's pending
-     * queue. The rAF scroll loop drains every queue one pixel column
-     * per frame.
+     * min/max blocks (one per pixel column) and replace its display
+     * history in chronological order. Each payload is a FULL snapshot,
+     * not an incremental chunk; replaying it via the scrolling FIFO
+     * would duplicate history (or reverse time if queued newest-first).
      *
      * Traces that are NOT pre-registered via addTrace() are
      * auto-registered on the first encounter with a palette colour
@@ -894,65 +913,94 @@
       // here — its semantic is "zoom into the loudness-normalised
       // waveform", not "scale every absolute-unit value on the canvas".
 
-      // How many samples each display pixel column covers.
-      // _bufferSize columns represent _duration seconds, so each
-      // column = (sampleRate * duration) / bufferSize samples.
-      const samplesPerPixel =
-        (this._sampleRate * this._duration) / this._bufferSize;
-      if (samplesPerPixel < 1) return;
-
-      // For each present trace: per-pixel-column MIN/MAX reduction.
-      // Each queue entry is a [maxSigned, minSigned] pair (2-element
-      // Array). The rAF scroll loop drains each FIFO in lockstep.
-      const pixelColumnsFloat = numBins / samplesPerPixel;
-
-      // Mirror the latest deinterleaved raw data into `samples` so the
-      // test (and any debugger) can inspect what was just pushed.
-      // samples[0] is the NEWEST sample, samples[visibleSamples-1] is
-      // the OLDEST sample in the chunk.
-      for (const { ch, samples } of present) {
-        ch.fracAccum += (pixelColumnsFloat - Math.floor(pixelColumnsFloat));
-        let extraFromFrac = 0;
-        if (ch.fracAccum >= 1.0) {
-          extraFromFrac = Math.floor(ch.fracAccum);
-          ch.fracAccum -= extraFromFrac;
+      // The C++ sends a complete five-second ring, oldest first. Seed
+      // the display from the first snapshot only. Every later snapshot
+      // contributes just its elapsed tail to the FIFO, restoring the
+      // committed rAF scrolling path without replaying five seconds of
+      // history (the source of the sawtooth/snap-back).
+      this._duration = numBins / this._sampleRate;
+      const pixelColumns = this._bufferSize;
+      const samplesPerPixel = numBins / pixelColumns;
+      const nowMs = this._scopeNowMs();
+      let initial = !this._hasScopeSnapshot;
+      let newSamples = numBins;
+      if (!initial) {
+        const elapsed = Math.max(0, nowMs - this._lastScopeSnapshotMs);
+        this._scopeSampleAccum += elapsed * this._sampleRate / 1000.0;
+        newSamples = Math.floor(this._scopeSampleAccum);
+        this._scopeSampleAccum -= newSamples;
+        // A suspended UI can miss a complete history window. Re-seed in
+        // that case; otherwise append only the newest tail.
+        if (newSamples >= numBins) {
+          initial = true;
+          newSamples = numBins;
+          this._scopeSampleAccum = 0;
         }
-        const pixelColumns = Math.floor(pixelColumnsFloat) + extraFromFrac;
+      }
+      this._hasScopeSnapshot = true;
+      this._lastScopeSnapshotMs = nowMs;
 
-        // Allocate / resize the inspection buffer.
+      for (const { ch, samples } of present) {
         if (!ch.samples || ch.samples.length !== numBins) {
           ch.samples = new Float32Array(numBins);
         }
-        // Fill reversed: newest at index 0.
-        for (let i = 0; i < numBins; i++) {
-          ch.samples[i] = samples[numBins - 1 - i];
-        }
+        for (let i = 0; i < numBins; i++) ch.samples[i] = samples[i];
         ch.visibleSamples = numBins;
 
-        for (let p = 0; p < pixelColumns; p++) {
-          const start = Math.floor(p * samplesPerPixel);
-          const end   = Math.min(numBins,
-            Math.max(start + 1, Math.floor((p + 1) * samplesPerPixel)));
-          // IMPORTANT: initialise the column's min/max to ±Infinity, NOT
-          // 0. For traces that are always negative (e.g. a gain curve
-          // sitting at -5 dB for the whole column), starting maxSigned
-          // at 0 would leave maxSigned pinned at 0 forever, and the
-          // renderer would draw that column at the dB=0 line — the
-          // visual bug that made the gain trace look flat at centre
-          // during sustained cuts. With ±Infinity both bounds reflect
-          // the actual sample range, and the (max+min)/2 midpoint
-          // renderer below draws the trace at its real signed value.
+        const isLine = ch._renderStyle === 'line';
+        const reduce = (start, end) => {
           let maxSigned = -Infinity;
           let minSigned = Infinity;
           for (let i = start; i < end; i++) {
             const v = samples[i];
+            // -200 dB marks an unavailable gain sample, not a peak.
+            if (!Number.isFinite(v) || (isLine && Math.abs(v) > 60)) continue;
             if (v > maxSigned) maxSigned = v;
             if (v < minSigned) minSigned = v;
           }
-          if (!isFinite(maxSigned)) maxSigned = 0;
-          if (!isFinite(minSigned)) minSigned = 0;
-          ch.queue.push([maxSigned, minSigned]);
+          if (!isFinite(maxSigned)) maxSigned = isLine ? -200 : 0;
+          if (!isFinite(minSigned)) minSigned = isLine ? -200 : 0;
+          return [maxSigned, minSigned];
+        };
+
+        if (initial) {
+          // Initial history: one min/max envelope per display column.
+          ch.queue.length = 0;
+          ch.fracAccum = 0;
+          for (let p = 0; p < pixelColumns; p++) {
+            const start = Math.floor(p * samplesPerPixel);
+            const end = Math.min(numBins,
+              Math.max(start + 1, Math.floor((p + 1) * samplesPerPixel)));
+            const pair = reduce(start, end);
+            ch.maxBuffer[p] = pair[0];
+            ch.minBuffer[p] = pair[1];
+          }
+        } else if (newSamples > 0) {
+          // Incremental tail: preserve fractional pixel timing exactly as
+          // the committed FIFO path did, but reduce only fresh samples.
+          const columnsFloat = newSamples / samplesPerPixel;
+          ch.fracAccum += columnsFloat - Math.floor(columnsFloat);
+          let pixelColumnsToQueue = Math.floor(columnsFloat);
+          if (ch.fracAccum >= 1.0) {
+            pixelColumnsToQueue += Math.floor(ch.fracAccum);
+            ch.fracAccum -= Math.floor(ch.fracAccum);
+          }
+          const tailStart = numBins - newSamples;
+          for (let p = 0; p < pixelColumnsToQueue; p++) {
+            const start = tailStart + Math.floor(p * newSamples / pixelColumnsToQueue);
+            const end = Math.min(numBins,
+              Math.max(start + 1, tailStart + Math.floor((p + 1) * newSamples / pixelColumnsToQueue)));
+            ch.queue.push(reduce(start, end));
+          }
+          // Bound backlog if the host returns after a long UI stall.
+          while (ch.queue.length > pixelColumns) ch.queue.shift();
         }
+      }
+      if (initial) {
+        // The seeded image is already five seconds wide: start future rAF
+        // movement from this instant rather than skipping it immediately.
+        this._scrollAccum = 0;
+        this._lastScrollTime = nowMs;
       }
     }
 
@@ -999,11 +1047,15 @@
       back.scale(this._dpr, this._dpr);
       this._drawTo(back, cssW, cssH);
 
-      // Atomic present via single drawImage.
+      // Atomic replace via one drawImage. `copy` avoids both a separately
+      // composited clear-frame and alpha accumulation from repeatedly
+      // source-over compositing a translucent waveform onto the front canvas.
       const front = this._ctx;
       front.setTransform(1, 0, 0, 1, 0, 0);
-      front.clearRect(0, 0, this._canvas.width, this._canvas.height);
+      const previousComposite = front.globalCompositeOperation;
+      front.globalCompositeOperation = 'copy';
       front.drawImage(this._backCanvas, 0, 0);
+      front.globalCompositeOperation = previousComposite || 'source-over';
     }
 
     _drawTo(ctx, cssW, cssH) {
@@ -1065,9 +1117,9 @@
         // because every trace gets its own pass through this loop
         // before the next render() call.
         const prevAlpha = ctx.globalAlpha;
-        if (Number.isFinite(+ch._alpha) && (+ch._alpha) >= 0 && (+ch._alpha) <= 1) {
-          ctx.globalAlpha = +ch._alpha;
-        }
+        // `_applyAlphaToColor()` below already applies ch._alpha. Keep the
+        // canvas alpha untouched so 0.7 means exactly 70%, not 0.7 × 0.7.
+        ctx.globalAlpha = 1;
 
         // Resolve per-trace source buffers. For a regular trace we
         // just read its own maxBuffer/minBuffer. For a derived trace
@@ -1106,7 +1158,9 @@
           getColumn = (i) => [ch.maxBuffer[i], ch.minBuffer[i]];
         }
 
-        ctx.strokeStyle = MultiOscilloscope._applyAlphaToColor(ch.color, ch._alpha);
+        const traceColor = MultiOscilloscope._applyAlphaToColor(ch.color, ch._alpha);
+        ctx.strokeStyle = traceColor;
+        ctx.fillStyle = traceColor;
         ctx.lineWidth = ch.lineWidth;
         ctx.lineCap = (ch._renderStyle === 'line' || ch._renderStyle === 'envelope') ? 'round' : 'butt';
         ctx.lineJoin = (ch._renderStyle === 'line' || ch._renderStyle === 'envelope') ? 'round' : 'miter';
@@ -1128,96 +1182,53 @@
           // Use this for waveform traces where you want to see both
           // half-cycles of the signal without the heavy "filled area"
           // look of the bar style.
-          let topPathOpen = false;
-          let botPathOpen = false;
-          let topLastY = 0;
-          let botLastY = 0;
-          for (let i = 0; i < N; i++) {
-            let [maxV, minV] = getColumn(i);
-            const isEmpty = (maxV === 0 && minV === 0);
-            // Silence sentinel: skip but keep the polyline "held" at the
-            // last visible y position (same trick as the 'line' style).
-            const isSilence = (Math.abs(maxV) > 60 || Math.abs(minV) > 60);
-            if (isEmpty) { topPathOpen = false; botPathOpen = false; continue; }
-            if (isSilence) {
-              if (topPathOpen) ctx.lineTo(i + 0.5, topLastY);
-              if (botPathOpen) ctx.lineTo(i + 0.5, botLastY);
-              continue;
+          // Canvas has only ONE current path position. Interleaving
+          // top/bottom lineTo calls connects the contours across every
+          // column and paints a solid zigzag area instead of two outlines.
+          // Draw each contour in a separate pass.
+          for (let side = 0; side < 2; side++) {
+            ctx.beginPath();
+            let pathOpen = false;
+            for (let i = 0; i < N; i++) {
+              const [maxV, minV] = getColumn(i);
+              const isEmpty = maxV === 0 && minV === 0;
+              const isSilence = Math.abs(maxV) > 60 || Math.abs(minV) > 60;
+              if (isEmpty || isSilence) { pathOpen = false; continue; }
+              let v = side === 0 ? maxV : minV;
+              if (chHasGain) v *= chGain;
+              if (chHasOffset) v += chOffset;
+              const y = ySnap(this.getPixelYFor(ch, v));
+              if (!pathOpen) {
+                ctx.moveTo(i + 0.5, y);
+                pathOpen = true;
+              } else {
+                ctx.lineTo(i + 0.5, y);
+              }
             }
-            if (chHasGain)  { maxV *= chGain; minV *= chGain; }
-            if (chHasOffset) { maxV += chOffset; minV += chOffset; }
-            const yTop = ySnap(this.getPixelYFor(ch, maxV));
-            const yBot = ySnap(this.getPixelYFor(ch, minV));
-            if (!topPathOpen) {
-              ctx.moveTo(i + 0.5, yTop);
-              topPathOpen = true;
-            } else {
-              ctx.lineTo(i + 0.5, yTop);
-            }
-            if (!botPathOpen) {
-              ctx.moveTo(i + 0.5, yBot);
-              botPathOpen = true;
-            } else {
-              ctx.lineTo(i + 0.5, yBot);
-            }
-            topLastY = yTop;
-            botLastY = yBot;
+            ctx.stroke();
           }
-          ctx.stroke();
         } else if (ch._renderStyle === 'line') {
           // ============================================================
-          // LINE STYLE: polyline through maxBuffer[i] across columns.
+          // LINE STYLE: polyline through the signed peak of each column.
           // ============================================================
-          // Niente fill verticale: una singola linea che collega il
-          // valore `max` di colonne consecutive, con `gain` e `offset`
-          // applicati al render-time. Le colonne "vuote" (max = min = 0,
-          // il sentinel "no data") interrompono la polilinea (ctx.moveTo
-          // invece di ctx.lineTo) cosi' il silenzio non produce una
-          // linea che salta al centro, ma un gap pulito. Use this for
-          // state-like traces (gain, envelope follower) that have a
-          // single meaningful value per sample.
-          //
-          // Note: gain in dB can legitimately hit 0 (passthrough / unity),
-          // which collides with the `0 == empty` sentinel. We disambiguate
-          // by ALSO checking minBuffer: a real "no data" column has BOTH
-          // max and min == 0 (from the -200 dB sentinel the C++ never
-          // sends in pushRaw — but pushRaw normalises to 0 anyway), so
-          // checking `(maxV === 0 && minV === 0)` for the line skip is
-          // safe. For the gain trace this also matches the bar-style skip.
+          // Use max for boosts and min for cuts (greatest magnitude).
+          // Averaging min/max changes the displayed peak as a transient
+          // moves between pixel buckets, even when the source is unchanged.
+          // Gain/offset remain render-time adjustments; no temporal smoothing.
           let pathOpen = false;
-          let lastY = 0;   // most recent visible y, used to "hold" through silence columns
           for (let i = 0; i < N; i++) {
             let [maxV, minV] = getColumn(i);
-            // Empty-column sentinel: a real "no data" column has BOTH
-            // max and min == 0. For state-like traces (e.g. gain in dB)
-            // the column's max/min pair can be (0, -5) during a steady
-            // cut — max=0 because every sample is below unity on the
-            // linear scale the JS min/max tracker uses (gain negative
-            // dB maps to <1 linear, but JS still works in dB here, so
-            // the issue is purely in how the column was reduced). We
-            // use the (max, min) midpoint for the polyline so single-
-            // signed columns are plotted at their real signed position.
+            // Preserve the existing empty-column behavior. Check BOTH
+            // bounds so a bucket spanning unity and a cut still gets drawn.
             if (maxV === 0 && minV === 0) { pathOpen = false; continue; }
-            // Silence sentinel: the C++ payload builder emits -200 dB
-            // on the gain channel whenever the dry input is below the
-            // silence threshold. We DON'T break the polyline here
-            // (the user wants the line to stay visually continuous
-            // across short zero-crossings of the input); instead we
-            // skip just this column and re-emit the LAST visible y
-            // position so the polyline looks "flat at the previous
-            // value" through the silence, which reads as a hold on
-            // the oscilloscope instead of an unintended vertical
-            // stroke to the bottom edge. If no previous visible
-            // column has been drawn yet, we open a fresh sub-path
-            // and start again on the next valid column.
+            // Only entirely missing buckets retain the silence sentinel
+            // after reduction. Leave a gap, never extend the previous gain
+            // into a fabricated plateau. Mixed buckets use their valid peak.
             if (Math.abs(maxV) > 60 || Math.abs(minV) > 60) {
-              if (pathOpen) {
-                ctx.lineTo(i + 0.5, lastY);
-              }
+              pathOpen = false;
               continue;
             }
-            const mid = 0.5 * (maxV + minV);
-            let v = mid;
+            let v = Math.abs(minV) > Math.abs(maxV) ? minV : maxV;
             if (chHasGain)  v *= chGain;
             if (chHasOffset) v += chOffset;
             const y = ySnap(this.getPixelYFor(ch, v));
@@ -1227,7 +1238,6 @@
             } else {
               ctx.lineTo(i + 0.5, y);
             }
-            lastY = y;
           }
           ctx.stroke();
         } else {
@@ -1249,18 +1259,18 @@
             }
             const yTop = ySnap(this.getPixelYFor(ch, maxV));
             const yBot = ySnap(this.getPixelYFor(ch, minV));
-            if (yBot - yTop < 1) {
-              ctx.moveTo(i + 0.5, yTop);
-              ctx.lineTo(i + 0.5, yTop + 1);
-            } else {
-              ctx.moveTo(i + 0.5, yTop);
-              ctx.lineTo(i + 0.5, yBot);
-            }
-            ctx.stroke();
+            // One opaque geometry operation per CSS pixel. Stroked 1px
+            // segments overlap on their anti-aliased edges, accumulating
+            // alpha and making a requested 0.7 waveform look fully opaque.
+            // A device-aligned rect is filled exactly once, so trace alpha
+            // has the visual value configured by the caller.
+            const top = Math.min(yTop, yBot);
+            const height = Math.max(1 / dpr, Math.abs(yBot - yTop));
+            ctx.fillRect(i, top, 1, height);
           }
         }
 
-        // Restore globalAlpha so the next trace starts opaque by default.
+        // Restore the caller's canvas state for the next trace.
         ctx.globalAlpha = prevAlpha;
       }
       ctx.restore();
