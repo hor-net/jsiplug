@@ -92,6 +92,7 @@ class iSpectrumChart extends iControl {
         
         // Create canvas elements
         this._setupCanvases();
+        this._gridRefreshTimer = null;
         
         // Initialize WebGL
         this._webglAvailable = this._initWebGL();
@@ -121,6 +122,22 @@ class iSpectrumChart extends iControl {
     
         // Add tooltip
         this._setupTooltip();
+
+        // WebKit does not expose 2D contextrestored. Its static grid must be
+        // recoverable without an event after a backing-store/compositor reset.
+        // Refresh at 1 Hz, not at spectrum frame rate, and never while hidden.
+        // Start only after successful initialization, not on partially built charts.
+        if (!('oncontextrestored' in this._gridCanvas)) {
+            this._gridRefreshTimer = setInterval(() => {
+                if (!this._domElement.isConnected) {
+                    clearInterval(this._gridRefreshTimer);
+                    this._gridRefreshTimer = null;
+                    return;
+                }
+                if (document.hidden || this._domElement.offsetWidth <= 0 || this._domElement.offsetHeight <= 0) return;
+                this._drawGrid();
+            }, 1000);
+        }
     }
 
     _downsampleData(data, frequencies, targetSize) {
@@ -218,6 +235,13 @@ class iSpectrumChart extends iControl {
         
         // Get contexts
         this._gridCtx = this._gridCanvas.getContext('2d');
+        // The grid is static (unlike the curves drawn every animation frame).
+        // A restored 2D context has lost both its pixels and drawing state;
+        // restore the DPR transform and redraw without waiting for a resize.
+        this._gridCanvas.addEventListener('contextrestored', () => {
+            this._gridCtx = this._gridCanvas.getContext('2d');
+            if (this._gridCtx) this._updateCanvasSize();
+        });
         this._spectrumCtx = this._spectrumCanvas.getContext('webgl', {
             antialias: true,
             alpha: true
@@ -471,6 +495,9 @@ class iSpectrumChart extends iControl {
 
     _drawGrid() {
         const ctx = this._gridCtx;
+        // Re-establish drawing state too, not just pixels: a restored context
+        // may have forgotten the DPR transform set during the last resize.
+        ctx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
         ctx.clearRect(0, 0, this._gridCanvas.width, this._gridCanvas.height);
         
         // Style setup
