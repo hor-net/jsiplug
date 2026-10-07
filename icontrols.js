@@ -138,7 +138,13 @@ class iControl {
 
   fromNormalized(value) {
 
-    let nonNormValue;
+    let nonNormValue = undefined;
+    // Some parameter descriptors carry no displayType (Number(undefined) is
+    // NaN): every branch below then misses and the control used to return
+    // undefined — the numeric readouts received NaN and stayed empty.
+    if (!isFinite(this._displayType)) {
+      this._displayType = 0;
+    }
     if (this._displayType == 0) { // kDisplayLinear
       nonNormValue = this._minVal + (this._maxVal - this._minVal) * value;
     } else if (this._displayType == 1) { // kDisplayLog
@@ -156,12 +162,18 @@ class iControl {
     } else if (this._displayType == 6) { // kDisplayCubeRoot
       nonNormValue = this._minVal + Math.pow(value, 3) * (this._maxVal - this._minVal);
     }
+    if (nonNormValue === undefined) {
+      nonNormValue = this._minVal + (this._maxVal - this._minVal) * value;
+    }
     return nonNormValue;
   }
 
   toNormalized(value) {
 
-    var normValue;
+    var normValue = undefined;
+    if (!isFinite(this._displayType)) {
+      this._displayType = 0;
+    }
     if (this._displayType == 0) { // kDisplayLinear
       normValue = ((value - this._minVal) / (this._maxVal - this._minVal));
     } else if (this._displayType == 1) { // kDisplayLog
@@ -178,6 +190,9 @@ class iControl {
       normValue = Math.pow((value - this._minVal) / (this._maxVal - this._minVal), 1.0 / 0.3);
     } else if (this._displayType == 6) { // kDisplayCubeRoot
       normValue = Math.pow((value - this._minVal) / (this._maxVal - this._minVal), 1.0 / 3);
+    }
+    if (normValue === undefined) {
+      normValue = ((value - this._minVal) / (this._maxVal - this._minVal));
     }
     return normValue;
   }
