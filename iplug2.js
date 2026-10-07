@@ -530,13 +530,18 @@ document.addEventListener('contextmenu', function(event) {
           }
 });
 
-// Send JSREADY message when DOM is loaded
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', function() {
-    var message = { "msg": "JSREADY" };
-    if(typeof IPlugSendMsg === 'function') IPlugSendMsg(message);
-  });
-} else {
+// Both the bridge and the native readiness retry must identify the same
+// document. Otherwise one notification can initialize the page a second time.
+function NotifyDOMReady() {
   var message = { "msg": "JSREADY" };
-  if(typeof IPlugSendMsg === 'function') IPlugSendMsg(message);
+  if (typeof window.IPlugDocumentId === 'string') {
+    message.documentId = window.IPlugDocumentId;
+  }
+  if (typeof IPlugSendMsg === 'function') IPlugSendMsg(message);
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', NotifyDOMReady);
+} else {
+  NotifyDOMReady();
 }
