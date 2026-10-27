@@ -734,6 +734,8 @@ class iSpectrumChart extends iControl {
             frequencies: null,
             isPeakHoldEnabled: true,
             isDecayEnabled: true,  // Add decay control option
+            decayHoldTime: 0,      // Hold live values this long after each update before release
+            liveTransitionTime: 0, // Interpolate live updates over this many milliseconds
             scaleId: 'default',  // Always set default scale
             integrationTime: 0,   // 0 disables EMA smoothing; >0 = milliseconds
             preferences: {
@@ -758,6 +760,8 @@ class iSpectrumChart extends iControl {
         spectrum._integrationTime = Number(spectrum.integrationTime) || 0;
         spectrum._smoothedPower = null;   // sized in updateSpectrum
         spectrum._lastUpdateTime = null;  // measured in ms
+        spectrum._lastSpectrumUpdateTime = null;
+        spectrum._decayStarted = false;
         spectrum._forceOverwrite = true;  // matches REAPER's integrate_en bootstrap
         spectrum._bypassDecay = spectrum._integrationTime > 0; // integration renders directly
         spectrum._integratedValue = null; // sized in updateSpectrum; holds dB values for the renderer
@@ -789,6 +793,8 @@ class iSpectrumChart extends iControl {
         if (!spectrum) return;
 
         const currentTime = performance.now();
+        spectrum._lastSpectrumUpdateTime = currentTime;
+        spectrum._decayStarted = false;
 
         // For layers that have integration enabled (input / output) we draw the
         // raw FFT bins directly with no spatial averaging, exactly like the
@@ -942,14 +948,31 @@ class iSpectrumChart extends iControl {
                 spectrum.peakHoldData[i] = Math.max(spectrum.peakHoldData[i], db);
             }
 
-            // Decay update: skipped entirely when the integrated curve is rendered
-            // (the renderer reads _integratedValue directly so it does not need the
-            // post-FFT peak-and-decay pass).
+            // Decay update: integrated curves bypass decay. For live layers with
+            // decayHoldTime, follow each fresh sample directly; the renderer starts
+            // release only after updates have stopped for the configured hold time.
             if (!spectrum._bypassDecay) {
-                if (tiltedData[i] > spectrum.decayData[i].value || !spectrum.isDecayEnabled) {
-                    spectrum.decayData[i].value = tiltedData[i];
-                    spectrum.decayData[i].startValue = tiltedData[i];
-                    spectrum.decayData[i].startTime = currentTime;
+                const decay = spectrum.decayData[i];
+                if (spectrum.decayHoldTime > 0 && spectrum.isDecayEnabled) {
+                    const transitionMs = Math.max(0, Number(spectrum.liveTransitionTime) || 0);
+                    let currentValue = decay.value;
+                    if (transitionMs > 0 && decay.liveTransitionDuration > 0) {
+                        const progress = Math.max(0, Math.min(1,
+                            (currentTime - decay.liveTransitionStartTime) / decay.liveTransitionDuration));
+                        currentValue = decay.liveTransitionStartValue +
+                            (decay.liveTransitionTargetValue - decay.liveTransitionStartValue) * progress;
+                    }
+                    decay.value = currentValue;
+                    decay.startValue = tiltedData[i];
+                    decay.startTime = 0;
+                    decay.liveTransitionStartValue = currentValue;
+                    decay.liveTransitionTargetValue = tiltedData[i];
+                    decay.liveTransitionStartTime = currentTime;
+                    decay.liveTransitionDuration = transitionMs;
+                } else if (tiltedData[i] > decay.value || !spectrum.isDecayEnabled) {
+                    decay.value = tiltedData[i];
+                    decay.startValue = tiltedData[i];
+                    decay.startTime = currentTime;
                 }
             }
         }
@@ -1200,20 +1223,51 @@ class iSpectrumChart extends iControl {
         }
 
 
+        // Keep live samples steady while updates are arriving. Once the stream
+        // has been quiet for decayHoldTime, begin the normal smooth release exactly
+        // once, from the last displayed value.
+        const decayHoldTime = Math.max(0, Number(spectrum.decayHoldTime) || 0);
+        const updateAge = spectrum._lastSpectrumUpdateTime === null
+            ? Infinity
+            : currentTime - spectrum._lastSpectrumUpdateTime;
+        const holdLiveSpectrum = decayHoldTime > 0 && updateAge < decayHoldTime;
+        if (decayHoldTime > 0 && !holdLiveSpectrum && !spectrum._decayStarted) {
+            for (let i = 0; i < N; ++i) {
+                const decay = spectrum.decayData[i];
+                if (decay.liveTransitionDuration > 0) {
+                    const progress = Math.max(0, Math.min(1,
+                        (currentTime - decay.liveTransitionStartTime) / decay.liveTransitionDuration));
+                    decay.value = decay.liveTransitionStartValue +
+                        (decay.liveTransitionTargetValue - decay.liveTransitionStartValue) * progress;
+                    decay.liveTransitionDuration = 0;
+                }
+                decay.startValue = decay.value;
+                decay.startTime = currentTime;
+            }
+            spectrum._decayStarted = true;
+        }
+
         // Batch process all points with decay
         for (let i = 0; i < N; ++i) {
-            if (spectrum.decayData[i].startTime > 0) {
-                const elapsed = currentTime - spectrum.decayData[i].startTime;
-                const startValue = (spectrum.decayData[i].startValue !== undefined && spectrum.decayData[i].startValue !== null)
-                    ? spectrum.decayData[i].startValue
-                    : spectrum.decayData[i].value;
+            const decay = spectrum.decayData[i];
+            if (holdLiveSpectrum && decay.liveTransitionDuration > 0) {
+                const progress = Math.max(0, Math.min(1,
+                    (currentTime - decay.liveTransitionStartTime) / decay.liveTransitionDuration));
+                decay.value = decay.liveTransitionStartValue +
+                    (decay.liveTransitionTargetValue - decay.liveTransitionStartValue) * progress;
+            }
+            if (!holdLiveSpectrum && decay.startTime > 0) {
+                const elapsed = currentTime - decay.startTime;
+                const startValue = (decay.startValue !== undefined && decay.startValue !== null)
+                    ? decay.startValue
+                    : decay.value;
                 if (elapsed < this._decayTimeConstant) {
-                    spectrum.decayData[i].value = startValue + (scale.minDb - startValue) * (elapsed / this._decayTimeConstant);
+                    decay.value = startValue + (scale.minDb - startValue) * (elapsed / this._decayTimeConstant);
                 } else {
-                    spectrum.decayData[i].value = scale.minDb;
+                    decay.value = scale.minDb;
                 }
             }
-            const dbValue = spectrum.decayData[i].value;
+            const dbValue = decay.value;
             const clampedValue = Math.min(scale.maxDb, Math.max(scale.minDb, dbValue));
             // Instead of creating new objects, update existing ones
             points[i].x = this._freqToX(freqs[i]);
