@@ -97,9 +97,17 @@ class iSpectrumChart extends iControl {
         // Initialize WebGL
         this._webglAvailable = this._initWebGL();
         
-        // Setup resize observer
+        // Track both element-size changes and native WebView viewport resizes.
+        // Some hosts resize the native view without delivering a reliable
+        // ResizeObserver notification for this absolutely-positioned canvas.
         this._resizeObserver = new ResizeObserver(() => this._updateCanvasSize());
         this._resizeObserver.observe(this._domElement);
+        this._handleWindowResize = () => {
+            requestAnimationFrame(() => {
+                if (this._domElement.isConnected) this._updateCanvasSize();
+            });
+        };
+        window.addEventListener('resize', this._handleWindowResize);
         
         // Initial setup with zero data
         this._updateCanvasSize();
@@ -286,23 +294,37 @@ class iSpectrumChart extends iControl {
         this._spectrumCanvas.style.width = `${rect.width}px`;
         this._spectrumCanvas.style.height= `${rect.height}px`;
 
-        // bump up the actual backing-store resolution by dpr
-        this._gridCanvas.width     = Math.round(rect.width  * this._dpr);
-        this._gridCanvas.height    = Math.round(rect.height * this._dpr);
-        this._spectrumCanvas.width = Math.round(rect.width  * this._dpr);
-        this._spectrumCanvas.height= Math.round(rect.height * this._dpr);
+        // Resizing a canvas backing store clears its pixels and resets its
+        // drawing state. Avoid resetting it on redundant observer/window events.
+        const backingWidth = Math.round(rect.width * this._dpr);
+        const backingHeight = Math.round(rect.height * this._dpr);
+        const canvasSizeChanged = this._gridCanvas.width !== backingWidth ||
+                                  this._gridCanvas.height !== backingHeight ||
+                                  this._spectrumCanvas.width !== backingWidth ||
+                                  this._spectrumCanvas.height !== backingHeight;
+        if (canvasSizeChanged) {
+            this._gridCanvas.width = backingWidth;
+            this._gridCanvas.height = backingHeight;
+            this._spectrumCanvas.width = backingWidth;
+            this._spectrumCanvas.height = backingHeight;
+        }
 
         // now scale the 2D context so all your draw calls (which use CSS coords) map 1:1
-        this._gridCtx.resetTransform();  
+        this._gridCtx.resetTransform();
         this._gridCtx.scale(this._dpr, this._dpr);
 
-        // Clear caches as parameters for conversion have changed
+        // Clear caches as parameters for conversion have changed and force all
+        // layers (including static EQ curves) to rebuild points for the new size.
         this._freqToXCache.clear();
         this._xToFreqCache.clear();
-        this._dbToYCache.clear(); // Clear the new cache
-        this._binToFreqCache.clear(); // Clear the _binToFreq cache
-            
+        this._dbToYCache.clear();
+        this._binToFreqCache.clear();
+        for (const spectrum of this._spectrumLayers.values()) {
+            spectrum._needsUpdate = true;
+        }
+
         this._drawGrid();
+        if (this._webglAvailable && !this._isAnimating) this._drawFrame();
     }
 
     _freqToX(freq) {
